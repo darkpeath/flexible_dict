@@ -25,7 +25,7 @@ setup(
     version=about['__version__'],
     description=description,
     long_description=long_description,
-    long_description_content_type='markdown',
+    long_description_content_type='text/markdown',
     author='darkpeath',
     author_email='darkpeath@gmail.com',
     url="https://github.com/darkpeath/flexible_dict",
