@@ -32,3 +32,36 @@ a.j = "update value"  # set value
 
 print(a['j'])  # access value via native dict way
 ```
+
+### Build a json_object class from json data
+
+Suppose there is a file named `a.py` with content
+
+```json
+{
+  "a": 1,
+  "b": "two",
+  "c": {
+    "d": 4,
+    "e": "li"
+  }
+}
+```
+
+Run the script bellow
+```shell
+python -m flexible_dict build_class --name A --file a.json --output a.py
+```
+
+Then a file named `a.py` will be generated
+
+```python
+from flexible_dict import json_object
+
+@json_object
+class A:
+    a: int
+    b: str
+    c: dict
+```
+
