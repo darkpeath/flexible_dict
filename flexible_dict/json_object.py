@@ -18,13 +18,14 @@ class Field:
     name: str = None
     type: str = None
     static: bool = False    # a class property
-    key: str = MISSING     # the key stored in the dict; if set as MISSING, same as name
+    key: str = MISSING     # the key stored in the dict; same as name if set as MISSING
     readable: bool = True
     writeable: bool = True
     deletable: bool = True
     default: Any = None     # default value when the key not exists
     default_factory: Callable[[dict], Any] = MISSING     # a function to get a value from the dict
     check_exist_before_delete: bool = True  # if set as false, an exception will be raised when the key not exists
+    adapt_data_type: bool = None        # whether adapt data value as specified type; determined by the tool if set None
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 class JsonObjectClassProcessor(object):
@@ -103,7 +104,7 @@ class JsonObjectClassProcessor(object):
     @staticmethod
     def add_base(cls: type):
         """
-        添加dict基类
+        add dict as base if cls is not a subclass of dict
         """
         if not issubclass(cls, dict):
             d = dict(cls.__dict__)
@@ -112,11 +113,11 @@ class JsonObjectClassProcessor(object):
             cls = type(cls.__name__, bases, d)
         return cls
 
-    def process_cls(self, cls: type) -> type:
+    def set_fields(self, cls: type):
+        """
+        set fields in annotations as property
+        """
         annotations = cls.__dict__.get('__annotations__', {})
-        if not annotations:
-            return cls
-        cls = self.add_base(cls)
         for name, a_type in annotations.items():
             field = self.get_field(cls, name, a_type)
             if field.static:
@@ -126,6 +127,17 @@ class JsonObjectClassProcessor(object):
                     setattr(cls, name, field.default)
             else:
                 setattr(cls, name, self.build_property(field))
+
+    @staticmethod
+    def add_class_methods(cls: type):
+        """
+        add some class methods
+        """
+
+    def process_cls(self, cls: type) -> type:
+        cls = self.add_base(cls)
+        self.set_fields(cls)
+        self.add_class_methods(cls)
         return cls
 
     def __call__(self, cls: type) -> type:
