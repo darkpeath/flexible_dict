@@ -4,6 +4,7 @@
 # Code of dataclasses is pretty.
 
 from typing import Any, Callable, Dict
+import warnings
 import dataclasses
 import types
 
@@ -38,6 +39,10 @@ class JsonObjectClassProcessor(object):
         """
         self.default_field_value = default_field_value
 
+    @staticmethod
+    def is_missing(value: Any) -> bool:
+        return value is MISSING
+
     def get_field(self, cls, a_name, a_type) -> Field:
         # Return a Field object for this field name and type.
 
@@ -56,14 +61,11 @@ class JsonObjectClassProcessor(object):
         f.name = a_name
         f.type = a_type
 
+        # If missing key, set as name.
         if self.is_missing(f.key):
             f.key = a_name
 
         return f
-
-    @staticmethod
-    def is_missing(value: Any) -> bool:
-        return value is MISSING
 
     def build_getter(self, field: Field) -> Callable[[dict], Any]:
         if not self.is_missing(field.default):
@@ -134,14 +136,18 @@ class JsonObjectClassProcessor(object):
         add some class methods
         """
 
-    def process_cls(self, cls: type) -> type:
+    def process_class(self, cls: type) -> type:
         cls = self.add_base(cls)
         self.set_fields(cls)
         self.add_class_methods(cls)
         return cls
 
+    def process_cls(self, cls: type) -> type:
+        warnings.warn("deprecated, please use self.process_class() instead.", DeprecationWarning)
+        return self.process_class(cls)
+
     def __call__(self, cls: type) -> type:
-        return self.process_cls(cls)
+        return self.process_class(cls)
 
 def json_object(cls=None, processor: JsonObjectClassProcessor = None, processor_cls=JsonObjectClassProcessor, **kwargs):
     """
