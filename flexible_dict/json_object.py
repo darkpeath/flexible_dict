@@ -14,10 +14,14 @@ class _MISSING_TYPE:
     pass
 MISSING = _MISSING_TYPE()
 
+# The name of an attribute on the class where we store the Field
+# objects.  Also used to check if a class is a json_object class.
+_FIELDS = '__json_object_fields__'
+
 @dataclasses.dataclass
 class Field:
     name: str = None
-    type: str = None
+    type: type = None
     static: bool = False    # a class property
     key: str = MISSING     # the key stored in the dict; same as name if set as MISSING
     readable: bool = True
@@ -44,8 +48,9 @@ class JsonObjectClassProcessor(object):
         return value is MISSING
 
     def get_field(self, cls, a_name, a_type) -> Field:
-        # Return a Field object for this field name and type.
-
+        """
+        Return a Field object for this field name and type.
+        """
         # If the default value isn't derived from Field, then it's only a
         # normal default value.  Convert it to a Field().
         default = getattr(cls, a_name, self.default_field_value)
@@ -83,8 +88,17 @@ class JsonObjectClassProcessor(object):
 
     @staticmethod
     def build_setter(field: Field) -> Callable[[dict, Any], Any]:
-        def setter(d, value):
-            d[field.key] = value
+        adapt_data_type = field.adapt_data_type
+        if adapt_data_type is None:
+            adapt_data_type = isinstance(field.type, type) and hasattr(field.type, _FIELDS)
+        if adapt_data_type:
+            def setter(d, value):
+                if not isinstance(value, field.type) and isinstance(value, dict):
+                    value = field.type(value)
+                d[field.key] = value
+        else:
+            def setter(d, value):
+                d[field.key] = value
         return setter
 
     @staticmethod
@@ -119,16 +133,55 @@ class JsonObjectClassProcessor(object):
         """
         set fields in annotations as property
         """
-        annotations = cls.__dict__.get('__annotations__', {})
-        for name, a_type in annotations.items():
+        fields = {}
+
+        # Find our base classes in reverse MRO order, and exclude
+        # ourselves.  In reversed order so that more derived classes
+        # override earlier field definitions in base classes.  As long as
+        # we're iterating over them, see if any are frozen.
+        for b in cls.__mro__[-1:0:-1]:
+            # Only process classes that have been processed by our
+            # decorator.  That is, they have a _FIELDS attribute.
+            base_fields = getattr(b, _FIELDS, None)
+            if base_fields is not None:
+                for f in base_fields.values():
+                    fields[f.name] = f
+
+        # Annotations that are defined in this class (not in base
+        # classes).  If __annotations__ isn't present, then this class
+        # adds no new annotations.  We use this to compute fields that are
+        # added by this class.
+        #
+        # Fields are found from cls_annotations, which is guaranteed to be
+        # ordered.  Default values are from class attributes, if a field
+        # has a default.  If the default value is a Field(), then it
+        # contains additional info beyond (and possibly including) the
+        # actual default value.
+        cls_annotations = cls.__dict__.get('__annotations__', {})
+
+        # Now find fields in our class.  While doing so, validate some
+        # things, and set the default values (as class attributes) where
+        # we can.
+        for name, a_type in cls_annotations.items():
             field = self.get_field(cls, name, a_type)
             if field.static:
+                # It's not suggested to define a class field in this way.
                 if field.default is MISSING:
                     delattr(cls, name)
                 else:
                     setattr(cls, name, field.default)
             else:
                 setattr(cls, name, self.build_property(field))
+                fields[name] = field
+
+        # Do we have any Field members that don't also have annotations?
+        for name, value in cls.__dict__.items():
+            if isinstance(value, Field) and name not in cls_annotations:
+                raise TypeError(f'{name!r} is a field but has no type annotation')
+
+        # Remember all of the fields on our class (including bases).  This
+        # also marks this class as being a dataclass.
+        setattr(cls, _FIELDS, fields)
 
     @staticmethod
     def add_class_methods(cls: type):
