@@ -222,3 +222,22 @@ def json_object(cls=None, processor: JsonObjectClassProcessor = None, processor_
 
     # We're called as @flexible_dict without parens.
     return wrap(cls)
+
+# Another way to define a json_object class, just inherit this class.
+class JsonObject(dict):
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        JsonObjectClassProcessor()(cls)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        fields = getattr(self, _FIELDS, {})
+        for f in fields.values():
+            f: Field
+            value = self.get(f.key)
+            if value is None or not isinstance(f.type, type) or isinstance(value, f.type):
+                continue
+            adapt_data_type = f.adapt_data_type
+            if adapt_data_type is None or adapt_data_type:
+                adapt_data_type = hasattr(f.type, _FIELDS)
+            if adapt_data_type and isinstance(value, dict):
+                self[f.key] = f.type(value)
