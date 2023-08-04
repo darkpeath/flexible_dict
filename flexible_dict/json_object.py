@@ -23,6 +23,7 @@ class Field:
     name: str = None
     type: type = None
     static: bool = False    # a class property
+    exclude: bool = False   # exclude from dict key and mark as object property
     key: str = MISSING     # the key stored in the dict; same as name if set as MISSING
     readable: bool = True
     writeable: bool = True
@@ -166,10 +167,20 @@ class JsonObjectClassProcessor(object):
             field = self.get_field(cls, name, a_type)
             if field.static:
                 # It's not suggested to define a class field in this way.
-                if field.default is MISSING:
+                if self.is_missing(field.default):
                     delattr(cls, name)
                 else:
                     setattr(cls, name, field.default)
+            elif field.exclude:
+                if self.is_missing(field.default) and self.is_missing(field.default):
+                    delattr(cls, name)
+                elif not self.is_missing(field.default):
+                    # Actually it should be set to the obj when init,
+                    # this is a temp way to set as a class value.
+                    setattr(cls, name, field.default)
+                else:
+                    # Rare situation should set a dynamic default value.
+                    raise ValueError("not allowed to specify a factory.")
             else:
                 setattr(cls, name, self.build_property(field))
                 fields[name] = field
