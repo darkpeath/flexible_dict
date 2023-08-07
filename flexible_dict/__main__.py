@@ -12,7 +12,7 @@ commands = {
 def main():
     import sys
     if len(sys.argv) < 2:
-        logger.error(f"Usage: python -m flexible_dict cmd [arg ...]")
+        logger.error(f"Usage: python -m flexible_dict {'|'.join(commands.keys())} [arg ...]")
         sys.exit(1)
     cmd = sys.argv[1]
     if cmd not in commands:
