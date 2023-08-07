@@ -3,7 +3,7 @@
 # Same code is copied from dataclasses.
 # Code of dataclasses is pretty.
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Tuple, Iterable
 import warnings
 import dataclasses
 import types
@@ -239,6 +239,7 @@ class JsonObject(dict):
     def __init_subclass__(cls):
         super().__init_subclass__()
         JsonObjectClassProcessor()(cls)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         fields = getattr(self, _FIELDS, {})
@@ -252,3 +253,11 @@ class JsonObject(dict):
                 adapt_data_type = hasattr(f.type, _FIELDS)
             if adapt_data_type and isinstance(value, dict):
                 self[f.key] = f.type(value)
+    def field_items(self) -> Iterable[Tuple[str, Any]]:
+        """
+        iter of defined field values
+        """
+        fields = getattr(type(self), _FIELDS, {})
+        for name, field in fields.items():
+            if field.key in self:
+                yield name, self[field.key]
