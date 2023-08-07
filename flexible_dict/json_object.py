@@ -253,6 +253,7 @@ class JsonObject(dict):
                 adapt_data_type = hasattr(f.type, _FIELDS)
             if adapt_data_type and isinstance(value, dict):
                 self[f.key] = f.type(value)
+
     def field_items(self) -> Iterable[Tuple[str, Any]]:
         """
         iter of defined field values
@@ -261,3 +262,17 @@ class JsonObject(dict):
         for name, field in fields.items():
             if field.key in self:
                 yield name, self[field.key]
+
+    @staticmethod
+    def _iter_field_items_only() -> bool:
+        """
+        determine output of method items(): if `True`, same as field_items(); else same as dict.items()
+        """
+        return False
+
+    def items(self) -> Iterable[Tuple[str, Any]]:
+        if self._iter_field_items_only():
+            return self.field_items()
+        return super().items()
+
+
