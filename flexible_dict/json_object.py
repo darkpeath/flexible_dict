@@ -258,7 +258,8 @@ class JsonObject(dict):
         """
         iter of defined field values
         """
-        fields = getattr(type(self), _FIELDS, {})
+        # one should not define a field use the reserved name
+        fields = getattr(self, _FIELDS, {})
         for name, field in fields.items():
             if field.key in self:
                 yield name, self[field.key]
