@@ -276,4 +276,10 @@ class JsonObject(dict):
             return self.field_items()
         return super().items()
 
+    @classmethod
+    def from_dict(cls, d: dict) -> 'JsonObject':
+        """
+        This method can be overwritten for custom use.
+        """
+        return cls(d)
 
