@@ -1,12 +1,23 @@
-name: Create a new patch release
-on: workflow_dispatch
+# Create a release when push a tag
+
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - v[0-9]+.*
+      -
 jobs:
-  github:
+  create-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Create new patch release
-        run: .github/scripts/release.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Create release
+        uses: taiki-e/create-gh-release-action@v1
+        with:
+          # (Required) GitHub token for creating GitHub Releases.
+          token: ${{ secrets.GITHUB_TOKEN }}
