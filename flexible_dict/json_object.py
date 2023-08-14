@@ -4,6 +4,9 @@
 # Code of dataclasses is pretty.
 
 from typing import Any, Callable, Dict, Tuple, Iterable
+from types import GenericAlias
+import sys
+import re
 import warnings
 import dataclasses
 import types
@@ -14,9 +17,38 @@ class _MISSING_TYPE:
     pass
 MISSING = _MISSING_TYPE()
 
+# Markers for the various kinds of fields and pseudo-fields.
+class _FIELD_BASE:
+    def __init__(self, name):
+        self.name = name
+    def __repr__(self):
+        return self.name
+_FIELD_DICTKEY = _FIELD_BASE('_FIELD_DICTKEY')
+_FIELD_CLASSVAR = _FIELD_BASE('_FIELD_CLASSVAR')
+_FIELD_OBJECTVAR = _FIELD_BASE('_FIELD_OBJECTVAR')
+
 # The name of an attribute on the class where we store the Field
 # objects.  Also used to check if a class is a json_object class.
 _FIELDS = '__json_object_fields__'
+
+# String regex that string annotations for ClassVar or InitVar must match.
+# Allows "identifier.identifier[" or "identifier[".
+# https://bugs.python.org/issue33453 for details.
+_MODULE_IDENTIFIER_RE = re.compile(r'^(?:\s*(\w+)\s*\.)?\s*(\w+)')
+
+class ObjectVar:
+    __slots__ = ('type', )
+    def __init__(self, type):
+        self.type = type
+    def __repr__(self):
+        if isinstance(self.type, type) and not isinstance(self.type, GenericAlias):
+            type_name = self.type.__name__
+        else:
+            # typing objects, e.g. List[int]
+            type_name = repr(self.type)
+        return f'flexible_dict.ObjectVar[{type_name}]'
+    def __class_getitem__(cls, type):
+        return ObjectVar(type)
 
 @dataclasses.dataclass
 class Field:
@@ -33,6 +65,7 @@ class Field:
     check_exist_before_delete: bool = True  # if set as false, an exception will be raised when the key not exists
     adapt_data_type: bool = None        # whether adapt data value as specified type; determined by the tool if set None
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
+    _field_type: _FIELD_BASE = _FIELD_DICTKEY
 
 class JsonObjectClassProcessor(object):
     """
@@ -47,6 +80,78 @@ class JsonObjectClassProcessor(object):
     @staticmethod
     def is_missing(value: Any) -> bool:
         return value is MISSING
+
+    @staticmethod
+    def _is_classvar(a_type, typing):
+        # This test uses a typing internal class, but it's the best way to
+        # test if this is a ClassVar.
+        return (a_type is typing.ClassVar
+                or (type(a_type) is typing._GenericAlias
+                    and a_type.__origin__ is typing.ClassVar))
+
+    @staticmethod
+    def _is_objectvar(a_type, module):
+        # The module we're checking against is the module we're currently in.
+        return (a_type is module.ObjectVar or type(a_type) is module.ObjectVar)
+
+    @staticmethod
+    def _is_type(annotation, cls, a_module, a_type, is_type_predicate):
+        # Given a type annotation string, does it refer to a_type in
+        # a_module?  For example, when checking that annotation denotes a
+        # ClassVar, then a_module is typing, and a_type is
+        # typing.ClassVar.
+
+        # It's possible to look up a_module given a_type, but it involves
+        # looking in sys.modules (again!), and seems like a waste since
+        # the caller already knows a_module.
+
+        # - annotation is a string type annotation
+        # - cls is the class that this annotation was found in
+        # - a_module is the module we want to match
+        # - a_type is the type in that module we want to match
+        # - is_type_predicate is a function called with (obj, a_module)
+        #   that determines if obj is of the desired type.
+
+        # Since this test does not do a local namespace lookup (and
+        # instead only a module (global) lookup), there are some things it
+        # gets wrong.
+
+        # With string annotations, cv0 will be detected as a ClassVar:
+        #   CV = ClassVar
+        #   @dataclass
+        #   class C0:
+        #     cv0: CV
+
+        # But in this example cv1 will not be detected as a ClassVar:
+        #   @dataclass
+        #   class C1:
+        #     CV = ClassVar
+        #     cv1: CV
+
+        # In C1, the code in this function (_is_type) will look up "CV" in
+        # the module and not find it, so it will not consider cv1 as a
+        # ClassVar.  This is a fairly obscure corner case, and the best
+        # way to fix it would be to eval() the string "CV" with the
+        # correct global and local namespaces.  However that would involve
+        # a eval() penalty for every single field of every dataclass
+        # that's defined.  It was judged not worth it.
+
+        match = _MODULE_IDENTIFIER_RE.match(annotation)
+        if match:
+            ns = None
+            module_name = match.group(1)
+            if not module_name:
+                # No module name, assume the class's module did
+                # "from dataclasses import InitVar".
+                ns = sys.modules.get(cls.__module__).__dict__
+            else:
+                # Look up module_name in the class's module.
+                module = sys.modules.get(cls.__module__)
+                if module and module.__dict__.get(module_name) is a_module:
+                    ns = sys.modules.get(a_type.__module__).__dict__
+            if ns and is_type_predicate(ns.get(match.group(2)), a_module):
+                return True
+        return False
 
     def get_field(self, cls, a_name, a_type) -> Field:
         """
@@ -70,6 +175,68 @@ class JsonObjectClassProcessor(object):
         # If missing key, set as name.
         if self.is_missing(f.key):
             f.key = a_name
+
+        # Assume it's a normal field until proven otherwise.  We're next
+        # going to decide if it's a ClassVar or InitVar, everything else
+        # is just a normal field.
+        f._field_type = _FIELD_DICTKEY
+
+        # In addition to checking for actual types here, also check for
+        # string annotations.  get_type_hints() won't always work for us
+        # (see https://github.com/python/typing/issues/508 for example),
+        # plus it's expensive and would require an eval for every string
+        # annotation.  So, make a best effort to see if this is a ClassVar
+        # or InitVar using regex's and checking that the thing referenced
+        # is actually of the correct type.
+
+        # For the complete discussion, see https://bugs.python.org/issue33453
+
+        # If typing has not been imported, then it's impossible for any
+        # annotation to be a ClassVar.  So, only look for ClassVar if
+        # typing has been imported by any module (not necessarily cls's
+        # module).
+        typing = sys.modules.get('typing')
+        if typing:
+            if (self._is_classvar(a_type, typing)
+                    or (isinstance(f.type, str)
+                        and self._is_type(f.type, cls, typing, typing.ClassVar, self._is_classvar))):
+                f._field_type = _FIELD_CLASSVAR
+
+        # If the type is ObjectVar, or if it's a matching string annotation,
+        # then it's an ObjectVar.
+        if f._field_type is _FIELD_DICTKEY:
+            # The module we're checking against is the module we're currently in.
+            module = sys.modules[__name__]
+            if (self._is_objectvar(a_type, module)
+                    or (isinstance(f.type, str)
+                        and self._is_type(f.type, cls, dataclasses, dataclasses.InitVar, self._is_objectvar))):
+                f._field_type = _FIELD_OBJECTVAR
+
+        # Validations for individual fields.  This is delayed until now,
+        # instead of in the Field() constructor, since only here do we
+        # know the field name, which allows for better error reporting.
+
+        # Special restrictions for ClassVar.
+        if f._field_type is _FIELD_CLASSVAR:
+            if not self.is_missing(f.default_factory):
+                raise TypeError(f'field {f.name} cannot have a default factory')
+            # Should I check for other field settings? default_factory
+            # seems the most serious to check for.  Maybe add others.  For
+            # example, how about init=False (or really,
+            # init=<not-the-default-init-value>)?  It makes no sense for
+            # ClassVar and InitVar to specify init=<anything>.
+
+        # For real fields, disallow mutable defaults for known types.
+        if (f._field_type in (_FIELD_DICTKEY, _FIELD_OBJECTVAR)
+                and isinstance(f.default, (list, dict, set))):
+            raise ValueError(f'mutable default {type(f.default)} for field '
+                             f'{f.name} is not allowed: use default_factory')
+
+        # Set value if f is ClassVar or ObjectVar.
+        if f._field_type is _FIELD_CLASSVAR:
+            f.static = True
+        if f._field_type is _FIELD_OBJECTVAR:
+            f.exclude = True
 
         return f
 
