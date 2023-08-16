@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "setuptools_scm[toml]>=3.4"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexible_dict"
+dynamic = ["version"]
+description = "A flexible way to access dict data instead of built-in dict."
+readme = "RAEDME.md"
+authors = [
+    {name = "darkpeath", email = "darkpeath@gmail.com"}
+]
+
+[project.urls]
+Homepage = "https://github.com/darkpeath/flexible_dict"
+
+[tool.setuptools.packages.find]
+exclude = ["tests"]
+
+[tool.setuptools_scm]
