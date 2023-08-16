@@ -16,13 +16,8 @@ try:
 except IOError:
     long_description = description
 
-about = {}
-with io.open(os.path.join(here, name, "about.py")) as f:
-    exec(f.read(), about)
-
 setup(
     name=name,
-    version=about['__version__'],
     description=description,
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -34,4 +29,6 @@ setup(
     platforms="any",
     tests_require=["pytest"],
     scripts=[],
+    use_scm_version=True,
+    setup_requires=['setuptools_scm'],
 )
