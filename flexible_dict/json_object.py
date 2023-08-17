@@ -3,7 +3,7 @@
 # Same code is copied from dataclasses.
 # Code of dataclasses is pretty.
 
-from typing import Any, Callable, Dict, Tuple, Iterable
+from typing import Any, Callable, Dict, Tuple, Iterable, List
 from types import GenericAlias
 import sys
 import re
@@ -444,9 +444,12 @@ class JsonObject(dict):
         return super().items()
 
     @classmethod
-    def from_dict(cls, d: dict) -> 'JsonObject':
+    def from_dict(cls, d: Dict[str, Any]) -> 'JsonObject':
         """
         This method can be overwritten for custom use.
         """
         return cls(d)
 
+    @classmethod
+    def from_list(cls, li: List[Dict[str, Any]]) -> List['JsonObject']:
+        return [cls.from_dict(x) for x in li]
