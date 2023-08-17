@@ -1,0 +1,6 @@
+*       text=auto
+*.py    text    eol=lf  diff=python
+*.sh    text    eol=lf
+*.toml  text
+*.txt   text
+*.md    text
