@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from typing import List, Any
+from typing import (
+    List, Any, Dict, Set, Literal, Iterable,
+)
 import dataclasses
-import argparse
 import collections
 import json
 import re
+import logging
+
+logger = logging.getLogger('__file__')
 
 def line2camel(name: str, capitalized=False) -> str:
     if not name:
@@ -17,51 +21,151 @@ def line2camel(name: str, capitalized=False) -> str:
         name = name[0].upper() + name[1:]
     return name
 
+def camel2line(name: str, upper=False) -> str:
+    if not name:
+        return name
+    name = re.sub('(?<=[a-z])[A-Z]|(?<!^)[A-Z](?=[a-z])', '_\\g<0>', name)
+    return name.upper() if upper else name.lower()
+
 @dataclasses.dataclass
 class FieldDef:
     name: str
     type: str
+    key: str = None
     default: str = None
 
 @dataclasses.dataclass
 class ClassDef:
     name: str
-    fields: List[FieldDef] = dataclasses.field(default_factory=list)
+    _fields: List[FieldDef] = dataclasses.field(init=False, default_factory=list)
+    @property
+    def filed_num(self) -> int:
+        return len(self._fields)
+    @property
+    def fields(self) -> Iterable[FieldDef]:
+        return self._fields
+    def update_filed(self, name: str, v_type: str, key: str) -> int:
+        """
+        update a field definition
+        :param name:    field name
+        :param v_type:  value type
+        :param key:     dict key
+        :return:    this field index in field list
+        """
+        for i, filed in enumerate(self._fields):
+            filed: FieldDef
+            if filed.name == name:
+                if key != filed.key:
+                    logger.error(f"conflict key {filed.name} {filed.key} {key}")
+                if filed.type != v_type:
+                    logger.error(f"conflict value type {filed.name} {filed.type} {v_type}")
+                return i
+        self._fields.append(FieldDef(name, type=v_type, key=key))
+        return len(self._fields) - 1
 
+NAME_STYLES = Literal['upper_camel', 'lower_camel', 'upper_line', 'lower_line', 'unchanged']
+NAME_FORMS = Literal['singular', 'plural', 'unchanged']
+
+@dataclasses.dataclass(init=True, repr=False, eq=False, order=False, unsafe_hash=False, frozen=False)
 class ClassBuilder:
-    def __init__(self, indent=' ' * 4, dict_as_class=True, list_with_generic=True):
-        self.indent = indent
-        self.dict_as_class = dict_as_class
-        self.list_with_generic = list_with_generic
-        self.classes = collections.OrderedDict()
-        self.types = set()
-        self.module = "flexible_dict"
-        self.decorator_func = "json_object"
-        self.word_parser = None
+    indent: str = ' ' * 4
+    dict_as_class: bool = True
+    list_with_generic: bool = True
+    class_name_style: NAME_STYLES = "upper_camel"
+    field_name_style: NAME_STYLES = "lower_line"
+    class_name_form: NAME_FORMS = "singular"
+    list_filed_name_form: NAME_FORMS = "plural"
+
+    # use `xx = Field(key='xx')` to define a field even if field name is same as key
+    always_specify_key_explicitly: bool = False
+
+    # if `True`, inherit class `JsonObject` instead of using decorator `@json_object`
+    inherit_json_object_class: bool = True
+
+    classes: Dict[str, ClassDef] = dataclasses.field(init=False, default_factory=collections.OrderedDict)
+    types: Set[str] = dataclasses.field(init=False, default_factory=set)    # typing.xx which should be imported
+    should_import_field: bool = dataclasses.field(init=False, default=False)
+    word_parser: Any = dataclasses.field(init=False, default=None)
+
+    # class var
+    module = "flexible_dict"
+    decorator_func_name = "json_object"
+    base_class_name = 'JsonObject'
+    field_class_name = 'Field'
+
+    def __post_init__(self):
+        if isinstance(self.indent, int):
+            self.indent = ' ' * self.indent
+
+    def convert_word_form(self, word: str, form: Literal['singular', 'plural']) -> str:
+        if self.word_parser is None:
+            import inflect
+            self.word_parser = inflect.engine()
+        if form == 'singular':
+            res = self.word_parser.singular_noun(word)
+        elif form == 'plural':
+            res = self.word_parser.plural_noun(word)
+        else:
+            raise ValueError(f"Unexpected form: {form}")
+        return res or word
+
+    def get_plural_word(self, word: str) -> str:
+        return self.convert_word_form(word, form='plural')
 
     def get_singular_word(self, word: str) -> str:
         if word.endswith('_list'):
             return word[-5:]
         if word.endswith('List'):
             return word[-4:]
-        if self.word_parser is None:
-            import inflect
-            self.word_parser = inflect.engine()
-        res = self.word_parser.singular_noun(word)
-        if not res:
-            return word
-        return res
+        return self.convert_word_form(word, form='singular')
+
+    def get_name_by_style_and_form(self, name: str, style: NAME_STYLES = 'unchanged',
+                                   form: NAME_FORMS = 'unchanged') -> str:
+        if form == 'singular':
+            name = self.get_singular_word(name)
+        elif form == 'plural':
+            name = self.get_plural_word(name)
+        if style == 'upper_camel':
+            name = line2camel(name, capitalized=True)
+        elif style == 'lower_camel':
+            name = line2camel(name, capitalized=False)
+            name = name[0].lower() + name[1:]
+        elif style == 'upper_line':
+            name = camel2line(name, upper=True)
+        elif style == 'lower_line':
+            name = camel2line(name, upper=False)
+        return name
+
+    def gen_field_name(self, key: str, value: Any = None) -> str:
+        """
+        gen field name by json key and value
+        """
+        name_form = 'unchanged'
+        if isinstance(value, list):
+            name_form = self.list_filed_name_form
+        return self.get_name_by_style_and_form(key, style=self.field_name_style, form=name_form)
+
+    def gen_class_name(self, key: str) -> str:
+        """
+        gen class name by json key and value
+        """
+        return self.get_name_by_style_and_form(key, style=self.class_name_style, form=self.class_name_form)
 
     def get_type(self, key: str, value: Any) -> str:
-        t = type(value).__name__
-        if t == 'dict' and self.dict_as_class:
-            t = line2camel(key, capitalized=True)
-            self.build(t, value)
-        elif t == 'list' and value and value[0] and self.list_with_generic:
+        """
+        get field value type base on json value
+        this method may create new classes recursively
+        """
+        t = type(value)
+        type_name = t.__name__
+        if t == dict and self.dict_as_class:
+            type_name = self.gen_class_name(key)
+            self.build(type_name, value)
+        elif t == list and value and value[0] and self.list_with_generic:
             elem_type = self.get_type(self.get_singular_word(key), value[0])
-            t = f"List[{elem_type}]"
+            type_name = f"List[{elem_type}]"
             self.types.add('List')
-        return t
+        return type_name
 
     def build(self, name: str, d: dict) -> ClassDef:
         """
@@ -70,44 +174,73 @@ class ClassBuilder:
         :param d:       dict value
         """
         if name in self.classes:
-            return self.classes[name]
-        cls = ClassDef(name)
-        for k, v in d.items():
-            field = FieldDef(k, self.get_type(k, v))
-            cls.fields.append(field)
-        self.classes[name] = cls
+            cls = self.classes[name]
+        else:
+            cls = self.classes[name] = ClassDef(name)
+        for key, value in d.items():
+            v_type = self.get_type(key, value)
+            field_name = self.gen_field_name(key, value=value)
+            cls.update_filed(name=field_name, v_type=v_type, key=key)
         return cls
 
     def get_class_code_lines(self, cls: ClassDef) -> List[str]:
-        lines = [
-            f"@{self.decorator_func}",
-            f"class {cls.name}(dict):",
-        ]
-        if cls.fields:
+        if self.inherit_json_object_class:
+            lines = [
+                f"class {cls.name}({self.base_class_name}):"
+            ]
+        else:
+            lines = [
+                f"@{self.decorator_func_name}",
+                f"class {cls.name}(dict):",
+            ]
+        if cls.filed_num > 0:
             for field in cls.fields:
                 line = f"{self.indent}{field.name}: {field.type}"
-                if field.default is not None:
+                if self.always_specify_key_explicitly or field.name != field.key:
+                    args = {'key': field.key}
+                    if field.default is not None:
+                        args['default'] = field.default
+                    line += f" = Field({', '.join(f'{k}={json.dumps(v)}' for k, v in args.items())})"
+                    self.should_import_field = True
+                elif field.default is not None:
                     line += f" {repr(field.default)}"
                 lines.append(line)
         else:
             lines.append(self.indent + "pass")
         return lines
 
-    def get_code_text(self) -> str:
+    def get_import_lines(self) -> List[str]:
         lines = []
+
+        # elem should be imported in typing
         if self.types:
             lines.append(f"from typing import {', '.join(self.types)}")
-        lines.append(f"from {self.module} import {self.decorator_func}")
-        lines.append("")
-        for cls in self.classes.values():
-            lines.extend(self.get_class_code_lines(cls))
-            lines.append("")
-        return '\n'.join(lines)
+
+        # elem should be imported in this module
+        cur_module = []
+        if self.inherit_json_object_class:
+            cur_module.append(self.base_class_name)
+        else:
+            cur_module.append(self.decorator_func_name)
+        if self.should_import_field:
+            cur_module.append(self.field_class_name)
+        lines.append(f"from {self.module} import {', '.join(cur_module)}")
+
+        return lines
+
+    def get_code_text(self) -> str:
+        params = [
+            '\n'.join(self.get_import_lines()),
+        ]
+        for cls in reversed(self.classes.values()):
+            params.append('\n'.join(self.get_class_code_lines(cls)))
+        return '\n\n'.join(param for param in params if param) + "\n"
 
     def __str__(self) -> str:
         return self.get_code_text()
 
 def parse_args(args=None):
+    import argparse
     parser = argparse.ArgumentParser('build_class')
     parser.add_argument('--name', required=True, help='class name')
     g = parser.add_mutually_exclusive_group(required=True)
@@ -123,24 +256,40 @@ def parse_args(args=None):
     parser.add_argument('--list_with_generic', type=bool, default=True,
                         help='the field type with list value will be Type[T] if true, '
                              'otherwise will be a native list')
-    # parser.add_argument('--file_class_name_format', default='camel_case',
-    #                     choices=['camel_case'], help='field class name format')
+    parser.add_argument('--class_name_style', default='upper_camel', choices=NAME_STYLES.__args__,
+                        help='class name style when auto generate a new class')
+    parser.add_argument('--field_name_style', default='lower_line', choices=NAME_STYLES.__args__,
+                        help='field name style for all generated class')
+    parser.add_argument('--always_specify_key_explicitly', default=False, action='store_true',
+                        help="use `xx = Field(key='xx')` to define a field even if field name is same as key")
+    parser.add_argument('--use_decorator', dest='inherit_json_object_class', default=True,
+                        action='store_false', help='use decorator or inherit to define the json object class')
     return parser.parse_args(args)
 
 def build_class_from_json(args=None):
-    args = parse_args(args)
-    indent = ' ' * args.indent
-    if args.str:
-        d = json.loads(args.str)
+    args = parse_args(args).__dict__
+
+    root_cls_name = args.pop('name')
+    input_file = args.pop('file')
+    output_file = args.pop('output')
+    encoding = args.pop('encoding')
+    content = args.pop('str')
+
+    # get json value
+    if content:
+        d = json.loads(content)
     else:
-        with open(args.file, encoding=args.encoding) as f:
+        with open(input_file, encoding=encoding) as f:
             d = json.load(f)
 
-    builder = ClassBuilder(indent=indent, dict_as_class=args.dict_as_class, list_with_generic=args.list_with_generic)
-    builder.build(args.name, d)
+    # build class
+    builder = ClassBuilder(**args)
+    builder.build(root_cls_name, d)
     code = builder.get_code_text()
-    if args.output:
-        with open(args.output, 'w', encoding='utf-8') as f:
+
+    # save or print
+    if output_file:
+        with open(output_file, 'w', encoding='utf-8') as f:
             f.write(code)
     else:
         print(code)
