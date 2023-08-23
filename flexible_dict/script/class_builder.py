@@ -97,13 +97,16 @@ class ClassBuilder:
             self.indent = ' ' * self.indent
 
     def convert_word_form(self, word: str, form: Literal['singular', 'plural']) -> str:
+        res = None
         if self.word_parser is None:
             import inflect
             self.word_parser = inflect.engine()
         if form == 'singular':
             res = self.word_parser.singular_noun(word)
         elif form == 'plural':
-            res = self.word_parser.plural_noun(word)
+            singular = self.get_singular_word(word)
+            if singular == word:
+                res = self.word_parser.plural_noun(word)
         else:
             raise ValueError(f"Unexpected form: {form}")
         return res or word
