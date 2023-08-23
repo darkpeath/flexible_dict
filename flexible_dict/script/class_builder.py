@@ -276,14 +276,20 @@ def build_class_from_json(args=None):
 
     # get json value
     if content:
-        d = json.loads(content)
+        data = json.loads(content)
     else:
         with open(input_file, encoding=encoding) as f:
-            d = json.load(f)
+            data = json.load(f)
+    if isinstance(data, dict):
+        data = [data]
+    assert data, f"no data given"
+    assert isinstance(data, list), data
+    assert isinstance(data[0], dict), data
 
     # build class
     builder = ClassBuilder(**args)
-    builder.build(root_cls_name, d)
+    for d in data:
+        builder.build(root_cls_name, d)
     code = builder.get_code_text()
 
     # save or print
