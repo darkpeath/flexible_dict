@@ -52,20 +52,20 @@ class ObjectVar:
 
 @dataclasses.dataclass
 class Field:
-    name: str = None
-    type: type = None
-    static: bool = False    # a class property
-    exclude: bool = False   # exclude from dict key and mark as object property
     key: str = MISSING     # the key stored in the dict; same as name if set as MISSING
     readable: bool = True
     writeable: bool = True
     deletable: bool = True
     default: Any = None     # default value when the key not exists
     default_factory: Callable[[dict], Any] = MISSING     # a function to get a value from the dict
+    static: bool = False    # a class property
+    exclude: bool = False   # exclude from dict key and mark as object property
     check_exist_before_delete: bool = True  # if set as false, an exception will be raised when the key not exists
-    adapt_data_type: bool = None        # whether adapt data value as specified type; determined by the tool if set None
-    metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
+    adapt_data_type: bool = None    # whether adapt data value as specified type; determined by the tool if set None
+    name: str = None
+    type: type = None
     _field_type: _FIELD_BASE = _FIELD_DICTKEY
+    metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 class JsonObjectClassProcessor(object):
     """
