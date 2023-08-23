@@ -1,1 +1,1 @@
-setuptools_scm
+inflect>=7.0.0
