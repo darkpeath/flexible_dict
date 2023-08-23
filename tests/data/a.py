@@ -1,19 +1,17 @@
 from typing import List
-from flexible_dict import json_object
+from flexible_dict import JsonObject, Field
 
-@json_object
-class C(dict):
-    d: int
-    e: str
-
-@json_object
-class L(dict):
+class L(JsonObject):
     k1: int
     k2: str
 
-@json_object
-class A(dict):
+class C(JsonObject):
+    d: int
+    e: str
+
+class A(JsonObject):
     a: int
     b: str
     c: C
-    l: List[L]
+    ls: List[L] = Field(key="l")
+    keys: List[str]
