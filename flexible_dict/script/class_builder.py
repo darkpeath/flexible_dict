@@ -84,7 +84,6 @@ class ClassBuilder:
 
     classes: Dict[str, ClassDef] = dataclasses.field(init=False, default_factory=collections.OrderedDict)
     types: Set[str] = dataclasses.field(init=False, default_factory=set)    # typing.xx which should be imported
-    should_import_field: bool = dataclasses.field(init=False, default=False)
     word_parser: Any = dataclasses.field(init=False, default=None)
 
     # class var
@@ -200,8 +199,7 @@ class ClassBuilder:
                     args = {'key': field.key}
                     if field.default is not None:
                         args['default'] = field.default
-                    line += f" = Field({', '.join(f'{k}={json.dumps(v)}' for k, v in args.items())})"
-                    self.should_import_field = True
+                    line += f" = {self.field_class_name}({', '.join(f'{k}={json.dumps(v)}' for k, v in args.items())})"
                 elif field.default is not None:
                     line += f" {repr(field.default)}"
                 lines.append(line)
@@ -222,7 +220,8 @@ class ClassBuilder:
             cur_module.append(self.base_class_name)
         else:
             cur_module.append(self.decorator_func_name)
-        if self.should_import_field:
+        if (self.always_specify_key_explicitly
+                or any(any(f.name != f.key for f in cls.fields) for cls in self.classes.values())):
             cur_module.append(self.field_class_name)
         lines.append(f"from {self.module} import {', '.join(cur_module)}")
 
