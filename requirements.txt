@@ -1,1 +1,5 @@
+build
+wheel
+setuptools>=42
+setuptools-scm>=3.4
 inflect
