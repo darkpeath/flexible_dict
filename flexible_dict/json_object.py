@@ -4,7 +4,13 @@
 # Code of dataclasses is pretty.
 
 from typing import Any, Callable, Dict, Tuple, Iterable, List
-from types import GenericAlias
+try:
+    from types import GenericAlias
+except ImportError:
+    try:
+        from types import _GenericAlias as GenericAlias
+    except ImportError:
+        from typing import GenericMeta as GenericAlias
 import sys
 import re
 import warnings
@@ -86,7 +92,7 @@ class JsonObjectClassProcessor(object):
         # This test uses a typing internal class, but it's the best way to
         # test if this is a ClassVar.
         return (a_type is typing.ClassVar
-                or (type(a_type) is typing._GenericAlias
+                or (type(a_type) is GenericAlias
                     and a_type.__origin__ is typing.ClassVar))
 
     @staticmethod

@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
 from typing import (
-    List, Any, Dict, Set, Literal, Iterable,
+    List, Any, Dict, Set, Iterable,
 )
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import dataclasses
 import collections
 import json
@@ -65,6 +69,12 @@ class ClassDef:
 
 NAME_STYLES = Literal['upper_camel', 'lower_camel', 'upper_line', 'lower_line', 'unchanged']
 NAME_FORMS = Literal['singular', 'plural', 'unchanged']
+
+def get_literal_values(literal):
+    try:
+        return literal.__args__
+    except AttributeError:
+        return literal.__values__
 
 @dataclasses.dataclass(init=True, repr=False, eq=False, order=False, unsafe_hash=False, frozen=False)
 class ClassBuilder:
@@ -258,9 +268,9 @@ def parse_args(args=None):
     parser.add_argument('--list_with_generic', type=bool, default=True,
                         help='the field type with list value will be Type[T] if true, '
                              'otherwise will be a native list')
-    parser.add_argument('--class_name_style', default='upper_camel', choices=NAME_STYLES.__args__,
+    parser.add_argument('--class_name_style', default='upper_camel', choices=get_literal_values(NAME_STYLES),
                         help='class name style when auto generate a new class')
-    parser.add_argument('--field_name_style', default='lower_line', choices=NAME_STYLES.__args__,
+    parser.add_argument('--field_name_style', default='lower_line', choices=get_literal_values(NAME_STYLES),
                         help='field name style for all generated class')
     parser.add_argument('--always_specify_key_explicitly', default=False, action='store_true',
                         help="use `xx = Field(key='xx')` to define a field even if field name is same as key")
