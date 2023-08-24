@@ -1,0 +1,5 @@
+exclude MANIFEST.in
+exclude .gitignore .gitattributes
+exclude flexible_dict.egg-info/top_level.txt
+prune tests
+prune .github
