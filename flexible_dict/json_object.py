@@ -3,7 +3,10 @@
 # Same code is copied from dataclasses.
 # Code of dataclasses is pretty.
 
-from typing import Any, Callable, Dict, Tuple, Iterable, List
+from typing import (
+    Any, Callable, Dict, Tuple,
+    Iterable, List, Union,
+)
 try:
     from types import GenericAlias
 except ImportError:
@@ -16,6 +19,7 @@ import re
 import warnings
 import dataclasses
 import types
+from .adapter import Encoder, Decoder, JsonObjectEncoder
 
 # A sentinel object to detect if a parameter is supplied or not.  Use
 # a class to give it a better repr.
@@ -77,8 +81,9 @@ class Field:
     # # if set as false, an exception will be raised when the key not exists
     check_exist_before_delete: bool = True
 
-    # whether to adapt data value as specified type; determined by the tool if set None
-    adapt_data_type: bool = None
+    # functions to cast value type when write or read dict
+    encoder: Union[Encoder, Callable[[Any], Any], str] = 'auto'    # cast value type when write to dict
+    decoder: Union[Decoder, Callable[[Any], Any]] = None    # cast value type when read from dict
 
     # auto detect value
     name: str = None
@@ -87,6 +92,15 @@ class Field:
 
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self):
+        # in case some classes are both encoder and decoder,
+        # and method __call__ not set properly,
+        # specify encoder or decoder as the exact function
+        if isinstance(self.encoder, Encoder):
+            self.encoder = self.encoder.encode
+        if isinstance(self.decoder, Decoder):
+            self.decoder = self.decoder.decode
 
 class JsonObjectClassProcessor(object):
     """
@@ -259,32 +273,48 @@ class JsonObjectClassProcessor(object):
         if f._field_type is _FIELD_OBJECTVAR:
             f.exclude = True
 
+        # if encoder set auto, detect whether an encoder is needed
+        if f.encoder == 'auto':
+            if isinstance(f.type, type) and hasattr(f.type, _FIELDS):
+                f.encoder = JsonObjectEncoder(f.type)
+
         return f
 
     def build_getter(self, field: Field) -> Callable[[dict], Any]:
         if not self.is_missing(field.default):
-            def getter(d):
-                return d.get(field.key, field.default)
+            if callable(field.decoder):
+                def getter(d):
+                    if field.key in d:
+                        return field.decoder(d[field.key])
+                    return field.default
+            else:
+                def getter(d):
+                    return d.get(field.key, field.default)
         elif not self.is_missing(field.default_factory):
-            def getter(d):
-                if field.key in d:
-                    return d[field.key]
-                return field.default_factory(d)
+            if callable(field.decoder):
+                def getter(d):
+                    if field.key in d:
+                        return field.decoder(d[field.key])
+                    return field.default_factory(d)
+            else:
+                def getter(d):
+                    if field.key in d:
+                        return d[field.key]
+                    return field.default_factory(d)
         else:
-            def getter(d):
-                return d[field.key]
+            if callable(field.decoder):
+                def getter(d):
+                    return field.decoder(d[field.key])
+            else:
+                def getter(d):
+                    return d[field.key]
         return getter
 
     @staticmethod
     def build_setter(field: Field) -> Callable[[dict, Any], Any]:
-        adapt_data_type = field.adapt_data_type
-        if adapt_data_type is None:
-            adapt_data_type = isinstance(field.type, type) and hasattr(field.type, _FIELDS)
-        if adapt_data_type:
+        if callable(field.encoder):
             def setter(d, value):
-                if not isinstance(value, field.type) and isinstance(value, dict):
-                    value = field.type(value)
-                d[field.key] = value
+                d[field.key] = field.encoder(value)
         else:
             def setter(d, value):
                 d[field.key] = value
@@ -432,15 +462,9 @@ class JsonObject(dict):
         super().__init__(*args, **kwargs)
         fields = getattr(self, _FIELDS, {})
         for f in fields.values():
-            f: Field
-            value = self.get(f.key)
-            if value is None or not isinstance(f.type, type) or isinstance(value, f.type):
-                continue
-            adapt_data_type = f.adapt_data_type
-            if adapt_data_type is None or adapt_data_type:
-                adapt_data_type = hasattr(f.type, _FIELDS)
-            if adapt_data_type and isinstance(value, dict):
-                self[f.key] = f.type(value)
+            if callable(f.encoder):
+                value = self.get(f.key)
+                self[f.key] = f.encoder(value)
 
     def field_items(self) -> Iterable[Tuple[str, Any]]:
         """
