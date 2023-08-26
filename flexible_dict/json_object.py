@@ -58,19 +58,34 @@ class ObjectVar:
 
 @dataclasses.dataclass
 class Field:
-    key: str = MISSING     # the key stored in the dict; same as name if set as MISSING
+    # the key stored in the dict; same as name if set as MISSING
+    key: str = MISSING
+
+    # access control
     readable: bool = True
     writeable: bool = True
     deletable: bool = True
+
+    # default value setting
     default: Any = None     # default value when the key not exists
     default_factory: Callable[[dict], Any] = MISSING     # a function to get a value from the dict
+
+    # decide what scope the field belong to
     static: bool = False    # a class property
     exclude: bool = False   # exclude from dict key and mark as object property
-    check_exist_before_delete: bool = True  # if set as false, an exception will be raised when the key not exists
-    adapt_data_type: bool = None    # whether adapt data value as specified type; determined by the tool if set None
+
+    # # if set as false, an exception will be raised when the key not exists
+    check_exist_before_delete: bool = True
+
+    # whether to adapt data value as specified type; determined by the tool if set None
+    adapt_data_type: bool = None
+
+    # auto detect value
     name: str = None
     type: type = None
     _field_type: _FIELD_BASE = _FIELD_DICTKEY
+
+    # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 class JsonObjectClassProcessor(object):
