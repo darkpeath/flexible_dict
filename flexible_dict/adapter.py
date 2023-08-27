@@ -113,10 +113,55 @@ class AdapterDetector:
     """
     auto detect encoder and decoder for given type
     """
-    def detect_encoder(self, a_type: type) -> Optional[Encoder]:
+    @staticmethod
+    def detect_json_object_encoder(a_type: type) -> Optional[Encoder]:
+        """
+        detect encoder for json object class
+        """
         if isinstance(a_type, type) and hasattr(a_type, '__json_object_fields__'):
             return JsonObjectEncoder(a_type)
         return None
+
+    @staticmethod
+    def get_list_element_type(t: type) -> Optional[type]:
+        """
+        get element type for list type; if not a list type, return `None`
+        """
+        if hasattr(t, '__origin__'):
+            if t.__origin__ is list or t.__origin__ is List:
+                try:
+                    return t.__args__[0]  # type: ignore
+                except AttributeError:
+                    return t.__origin__.__parameters__[0].__name__  # type: ignore
+        return None
+
+    def detect_list_encoder(self, a_type: type) -> Optional[Encoder]:
+        """
+        detect an encoder for a list type
+        """
+        elem_type = self.get_list_element_type(a_type)
+        if elem_type is not None:
+            elem_encoder = self.detect_encoder(elem_type)
+            if elem_encoder is not None:
+                return JsonArrayEncoder(elem_encoder)
+        return None
+
+    def detect_encoder(self, a_type: type) -> Optional[Encoder]:
+        """
+        detect an encoder for given type if needed
+        :param a_type:  the given type
+        :return:        an instance of `Encoder` if given type need an encoder; else `None`
+        """
+        detect_funcs = [
+            self.detect_json_object_encoder,
+            self.detect_list_encoder,
+        ]
+        for detect_func in detect_funcs:
+            encoder = detect_func(a_type)
+            if encoder is not None:
+                return encoder
+        return None
+
     @staticmethod
     def detect_decoder(a_type: type) -> Optional[Decoder]:
         # currently, no type value is to be decoded when read from dict

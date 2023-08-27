@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from typing import List
+
 def test_json_object():
     from flexible_dict import json_object, MISSING
     @json_object
@@ -32,6 +34,7 @@ def test_JsonObject():
     class B(JsonObject):
         a: A
         k: int = 5
+        t: List[A]
 
     a = A()
     assert a.i == 3
@@ -47,7 +50,7 @@ def test_JsonObject():
     assert a.j == 10
     assert a['j'] == 10
 
-    b = B({"a": {"i": 7, "j": 21}})
+    b = B({"a": {"i": 7, "j": 21}, "t": [{"i": 8, "j": "t1"}, {"i": 3, "j": "t2"}]})
     assert b.k == 5
     assert b.a.i == 7
     assert b.a.j == 21
@@ -58,3 +61,6 @@ def test_JsonObject():
         pass
     else:
         assert False
+
+    assert b.t[0].i == 8
+    assert b.t[1].j == "t2"
