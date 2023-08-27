@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
 
+"""
+extend dict for flexibility
+"""
+
 # Same code is copied from dataclasses.
-# Code of dataclasses is pretty.
 
 from typing import (
     Any, Callable, Dict, Tuple,
     Iterable, List, Union,
 )
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 try:
     from types import GenericAlias
 except ImportError:
@@ -19,7 +26,12 @@ import re
 import warnings
 import dataclasses
 import types
-from .adapter import Encoder, Decoder, JsonObjectEncoder
+from .adapter import (
+    _ENCODER_TYPE, _DECODER_TYPE,
+    get_encoder_func,
+    get_decoder_func,
+    AdapterDetector,
+)
 
 # A sentinel object to detect if a parameter is supplied or not.  Use
 # a class to give it a better repr.
@@ -82,8 +94,8 @@ class Field:
     check_exist_before_delete: bool = True
 
     # functions to cast value type when write or read dict
-    encoder: Union[Encoder, Callable[[Any], Any], str] = 'auto'    # cast value type when write to dict
-    decoder: Union[Decoder, Callable[[Any], Any]] = None    # cast value type when read from dict
+    encoder: Union[_ENCODER_TYPE, Literal['auto'], None] = 'auto'    # cast value type when write to dict
+    decoder: Union[_DECODER_TYPE, None] = None    # cast value type when read from dict
 
     # auto detect value
     name: str = None
@@ -92,15 +104,6 @@ class Field:
 
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
-
-    def __post_init__(self):
-        # in case some classes are both encoder and decoder,
-        # and method __call__ not set properly,
-        # specify encoder or decoder as the exact function
-        if isinstance(self.encoder, Encoder):
-            self.encoder = self.encoder.encode
-        if isinstance(self.decoder, Decoder):
-            self.decoder = self.decoder.decode
 
 class JsonObjectClassProcessor(object):
     """
@@ -275,8 +278,17 @@ class JsonObjectClassProcessor(object):
 
         # if encoder set auto, detect whether an encoder is needed
         if f.encoder == 'auto':
-            if isinstance(f.type, type) and hasattr(f.type, _FIELDS):
-                f.encoder = JsonObjectEncoder(f.type)
+            detector = AdapterDetector()
+            f.encoder = detector.detect_encoder(f.type)
+            f.decoder = detector.detect_decoder(f.type)
+
+        # in case some classes are both encoder and decoder,
+        # and method __call__ not set properly,
+        # specify encoder or decoder as the exact function
+        if f.encoder:
+            f.encoder = get_encoder_func(f.encoder)
+        if f.decoder:
+            f.decoder = get_decoder_func(f.decoder)
 
         return f
 
