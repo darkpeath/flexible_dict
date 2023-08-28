@@ -6,7 +6,7 @@ encoder and decoder to convert value when write or read a dict key
 
 from typing import (
     Any, List, Optional,
-    Union, Callable,
+    Union, Callable, Tuple,
 )
 from abc import abstractmethod, ABC
 import dataclasses
@@ -108,6 +108,14 @@ class JsonArrayEncoder(Encoder):
             raise ValueError("value is not a list")
         return [self.elem_encoder(x) for x in value]
 
+NoneType = type(None)
+
+def get_typing_args(t: type) -> Tuple[type, ...]:
+    # assert hasattr(t, '__origin__')
+    try:
+        return t.__args__  # type: ignore
+    except AttributeError:
+        return t.__origin__.__parameters__  # type: ignore
 
 class AdapterDetector:
     """
@@ -129,10 +137,7 @@ class AdapterDetector:
         """
         if hasattr(t, '__origin__'):
             if t.__origin__ is list or t.__origin__ is List:
-                try:
-                    return t.__args__[0]  # type: ignore
-                except AttributeError:
-                    return t.__origin__.__parameters__[0].__name__  # type: ignore
+                return get_typing_args(t)[0]
         return None
 
     def detect_list_encoder(self, a_type: type) -> Optional[Encoder]:
@@ -146,6 +151,22 @@ class AdapterDetector:
                 return JsonArrayEncoder(elem_encoder)
         return None
 
+    def detect_union_encoder(self, a_type: type) -> Optional[Encoder]:
+        """
+        detect an encoder for Union[xx, yy, ...]
+        """
+        if hasattr(a_type, '__origin__') and a_type.__origin__ is Union:
+            args = [x for x in get_typing_args(a_type) if x is not NoneType]
+            if len(args) == 1:
+                return self.detect_encoder(args[0])
+        return None
+
+    def detect_optional_encoder(self, a_type: type) -> Optional[Encoder]:
+        """
+        detect an encoder for Optional[xxx]
+        """
+        return self.detect_union_encoder(a_type)
+
     def detect_encoder(self, a_type: type) -> Optional[Encoder]:
         """
         detect an encoder for given type if needed
@@ -155,6 +176,7 @@ class AdapterDetector:
         detect_funcs = [
             self.detect_json_object_encoder,
             self.detect_list_encoder,
+            self.detect_union_encoder,
         ]
         for detect_func in detect_funcs:
             encoder = detect_func(a_type)
