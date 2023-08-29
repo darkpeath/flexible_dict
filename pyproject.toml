@@ -10,6 +10,10 @@ readme = "README.md"
 authors = [
     {name = "darkpeath", email = "darkpeath@gmail.com"}
 ]
+dependencies = [
+    'dataclasses; python_version<"3.7"',
+    'typing_extensions; python_version<"3.8"',
+]
 
 [project.urls]
 Homepage = "https://github.com/darkpeath/flexible_dict"
