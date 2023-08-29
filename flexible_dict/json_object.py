@@ -14,13 +14,6 @@ try:
     from typing import Literal
 except ImportError:
     from typing_extensions import Literal
-try:
-    from types import GenericAlias
-except ImportError:
-    try:
-        from types import _GenericAlias as GenericAlias
-    except ImportError:
-        from typing import GenericMeta as GenericAlias
 import sys
 import re
 import warnings
@@ -63,7 +56,11 @@ class ObjectVar:
     def __init__(self, type):
         self.type = type
     def __repr__(self):
-        if isinstance(self.type, type) and not isinstance(self.type, GenericAlias):
+        is_type = isinstance(self.type, type)
+        if is_type and sys.version_info >= (3, 9):
+            from types import GenericAlias
+            is_type = not isinstance(self.type, GenericAlias)
+        if is_type:
             type_name = self.type.__name__
         else:
             # typing objects, e.g. List[int]
@@ -121,11 +118,7 @@ class JsonObjectClassProcessor(object):
 
     @staticmethod
     def _is_classvar(a_type, typing):
-        # This test uses a typing internal class, but it's the best way to
-        # test if this is a ClassVar.
-        return (a_type is typing.ClassVar
-                or (type(a_type) is GenericAlias
-                    and a_type.__origin__ is typing.ClassVar))
+        return dataclasses._is_classvar(a_type, typing)
 
     @staticmethod
     def _is_objectvar(a_type, module):
@@ -134,62 +127,7 @@ class JsonObjectClassProcessor(object):
 
     @staticmethod
     def _is_type(annotation, cls, a_module, a_type, is_type_predicate):
-        # Given a type annotation string, does it refer to a_type in
-        # a_module?  For example, when checking that annotation denotes a
-        # ClassVar, then a_module is typing, and a_type is
-        # typing.ClassVar.
-
-        # It's possible to look up a_module given a_type, but it involves
-        # looking in sys.modules (again!), and seems like a waste since
-        # the caller already knows a_module.
-
-        # - annotation is a string type annotation
-        # - cls is the class that this annotation was found in
-        # - a_module is the module we want to match
-        # - a_type is the type in that module we want to match
-        # - is_type_predicate is a function called with (obj, a_module)
-        #   that determines if obj is of the desired type.
-
-        # Since this test does not do a local namespace lookup (and
-        # instead only a module (global) lookup), there are some things it
-        # gets wrong.
-
-        # With string annotations, cv0 will be detected as a ClassVar:
-        #   CV = ClassVar
-        #   @dataclass
-        #   class C0:
-        #     cv0: CV
-
-        # But in this example cv1 will not be detected as a ClassVar:
-        #   @dataclass
-        #   class C1:
-        #     CV = ClassVar
-        #     cv1: CV
-
-        # In C1, the code in this function (_is_type) will look up "CV" in
-        # the module and not find it, so it will not consider cv1 as a
-        # ClassVar.  This is a fairly obscure corner case, and the best
-        # way to fix it would be to eval() the string "CV" with the
-        # correct global and local namespaces.  However that would involve
-        # a eval() penalty for every single field of every dataclass
-        # that's defined.  It was judged not worth it.
-
-        match = _MODULE_IDENTIFIER_RE.match(annotation)
-        if match:
-            ns = None
-            module_name = match.group(1)
-            if not module_name:
-                # No module name, assume the class's module did
-                # "from dataclasses import InitVar".
-                ns = sys.modules.get(cls.__module__).__dict__
-            else:
-                # Look up module_name in the class's module.
-                module = sys.modules.get(cls.__module__)
-                if module and module.__dict__.get(module_name) is a_module:
-                    ns = sys.modules.get(a_type.__module__).__dict__
-            if ns and is_type_predicate(ns.get(match.group(2)), a_module):
-                return True
-        return False
+        return dataclasses._is_type(annotation, cls, a_module, a_type, is_type_predicate)
 
     def get_field(self, cls, a_name, a_type) -> Field:
         """
@@ -402,7 +340,7 @@ class JsonObjectClassProcessor(object):
                 else:
                     setattr(cls, name, field.default)
             elif field.exclude:
-                if self.is_missing(field.default) and self.is_missing(field.default):
+                if self.is_missing(field.default) and self.is_missing(field.default_factory):
                     delattr(cls, name)
                 elif not self.is_missing(field.default):
                     # Actually it should be set to the obj when init,
