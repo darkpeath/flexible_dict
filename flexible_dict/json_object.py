@@ -58,8 +58,7 @@ class ObjectVar:
     def __repr__(self):
         is_type = isinstance(self.type, type)
         if is_type and sys.version_info >= (3, 9):
-            from types import GenericAlias
-            is_type = not isinstance(self.type, GenericAlias)
+            is_type = not isinstance(self.type, types.GenericAlias)
         if is_type:
             type_name = self.type.__name__
         else:
