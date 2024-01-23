@@ -16,7 +16,6 @@ except ImportError:
     from typing_extensions import Literal
 import sys
 import re
-import warnings
 import dataclasses
 import types
 from .adapter import (
@@ -91,7 +90,7 @@ class Field:
 
     # functions to cast value type when write or read dict
     encoder: Union[_ENCODER_TYPE, Literal['auto'], None] = 'auto'    # cast value type when write to dict
-    decoder: Union[_DECODER_TYPE, None] = None    # cast value type when read from dict
+    decoder: Union[_DECODER_TYPE, None] = 'auto'    # cast value type when read from dict
 
     # auto detect value
     name: str = None
@@ -105,11 +104,13 @@ class JsonObjectClassProcessor(object):
     """
     parse flexible_dict class, set property and function
     """
-    def __init__(self, default_field_value=None):
+    def __init__(self, default_field_value=None, adapter_detector: AdapterDetector = None):
         """
         :param default_field_value:     default value config on the class for field without init value
+        :param adapter_detector:        auto set encoder and decoder for field
         """
         self.default_field_value = default_field_value
+        self.adapter_detector = adapter_detector or AdapterDetector()
 
     @staticmethod
     def is_missing(value: Any) -> bool:
@@ -213,11 +214,11 @@ class JsonObjectClassProcessor(object):
         if f._field_type is _FIELD_OBJECTVAR:
             f.exclude = True
 
-        # if encoder set auto, detect whether an encoder is needed
+        # if encoder/decoder set auto, detect whether an encoder/decoder is needed
         if f.encoder == 'auto':
-            detector = AdapterDetector()
-            f.encoder = detector.detect_encoder(f.type)
-            f.decoder = detector.detect_decoder(f.type)
+            f.encoder = self.adapter_detector.detect_encoder(f.type)
+        if f.decoder == 'auto':
+            f.decoder = self.adapter_detector.detect_decoder(f.type)
 
         # in case some classes are both encoder and decoder,
         # and method __call__ not set properly,
@@ -259,8 +260,7 @@ class JsonObjectClassProcessor(object):
                     return d[field.key]
         return getter
 
-    @staticmethod
-    def build_setter(field: Field) -> Callable[[dict, Any], Any]:
+    def build_setter(self, field: Field) -> Callable[[dict, Any], Any]:
         if callable(field.encoder):
             def setter(d, value):
                 d[field.key] = field.encoder(value)
@@ -269,8 +269,7 @@ class JsonObjectClassProcessor(object):
                 d[field.key] = value
         return setter
 
-    @staticmethod
-    def build_deleter(field: Field) -> Callable[[dict], Any]:
+    def build_deleter(self, field: Field) -> Callable[[dict], Any]:
         if field.check_exist_before_delete:
             def deleter(d):
                 if field.key in d:
@@ -285,8 +284,7 @@ class JsonObjectClassProcessor(object):
                         fset=self.build_setter(field) if field.writeable else None,
                         fdel=self.build_deleter(field) if field.deletable else None)
 
-    @staticmethod
-    def add_base(cls: type):
+    def add_base(self, cls: type):
         """
         add dict as base if cls is not a subclass of dict
         """
@@ -297,9 +295,9 @@ class JsonObjectClassProcessor(object):
             cls = type(cls.__name__, bases, d)
         return cls
 
-    def set_fields(self, cls: type):
+    def process_fields(self, cls: type):
         """
-        set fields in annotations as property
+        process fields in annotations as property
         """
         fields = {}
 
@@ -358,24 +356,28 @@ class JsonObjectClassProcessor(object):
                 raise TypeError(f'{name!r} is a field but has no type annotation')
 
         # Remember all of the fields on our class (including bases).  This
-        # also marks this class as being a dataclass.
+        # also marks this class as being a json_object.
         setattr(cls, _FIELDS, fields)
 
-    @staticmethod
-    def add_class_methods(cls: type):
+    def add_class_methods(self, cls: type):
         """
         add some class methods
         """
 
     def process_class(self, cls: type) -> type:
+        """
+        entry point to process a class as json object
+        """
+        # first, ensure the class be a subclass of dict
         cls = self.add_base(cls)
-        self.set_fields(cls)
-        self.add_class_methods(cls)
-        return cls
 
-    def process_cls(self, cls: type) -> type:
-        warnings.warn("deprecated, please use self.process_class() instead.", DeprecationWarning)
-        return self.process_class(cls)
+        # then, process fields to access them in a flexible way
+        self.process_fields(cls)
+
+        # finally, add some flexible methods
+        self.add_class_methods(cls)
+
+        return cls
 
     def __call__(self, cls: type) -> type:
         return self.process_class(cls)
