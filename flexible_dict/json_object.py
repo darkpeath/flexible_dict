@@ -100,17 +100,24 @@ class Field:
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
+@dataclasses.dataclass
+class ProcessorConfig:
+    # default value config on the class for field without init value
+    default_field_value: Any = None
+
+    # auto set encoder and decoder for field
+    adapter_detector: AdapterDetector = None
+
+    # whether to create a new __init__ function
+    create_init_func: bool = False
+DEFAULT_CONFIG = ProcessorConfig()
+
 class JsonObjectClassProcessor(object):
     """
     parse flexible_dict class, set property and function
     """
-    def __init__(self, default_field_value=None, adapter_detector: AdapterDetector = None):
-        """
-        :param default_field_value:     default value config on the class for field without init value
-        :param adapter_detector:        auto set encoder and decoder for field
-        """
-        self.default_field_value = default_field_value
-        self.adapter_detector = adapter_detector or AdapterDetector()
+    def __init__(self, config=DEFAULT_CONFIG):
+        self.config = config
 
     @staticmethod
     def is_missing(value: Any) -> bool:
@@ -135,13 +142,13 @@ class JsonObjectClassProcessor(object):
         """
         # If the default value isn't derived from Field, then it's only a
         # normal default value.  Convert it to a Field().
-        default = getattr(cls, a_name, self.default_field_value)
+        default = getattr(cls, a_name, self.config.default_field_value)
         if isinstance(default, Field):
             f = default
         else:
             if isinstance(default, types.MemberDescriptorType):
                 # This is a field in __slots__, so it has no default value.
-                default = self.default_field_value
+                default = self.config.default_field_value
             f = Field(default=default)
 
         # Only at this point do we know the name and the type.  Set them.
@@ -216,9 +223,9 @@ class JsonObjectClassProcessor(object):
 
         # if encoder/decoder set auto, detect whether an encoder/decoder is needed
         if f.encoder == 'auto':
-            f.encoder = self.adapter_detector.detect_encoder(f.type)
+            f.encoder = self.config.adapter_detector.detect_encoder(f.type)
         if f.decoder == 'auto':
-            f.decoder = self.adapter_detector.detect_decoder(f.type)
+            f.decoder = self.config.adapter_detector.detect_decoder(f.type)
 
         # in case some classes are both encoder and decoder,
         # and method __call__ not set properly,
@@ -229,6 +236,15 @@ class JsonObjectClassProcessor(object):
             f.decoder = get_decoder_func(f.decoder)
 
         return f
+
+    @staticmethod
+    def _set_new_attribute(cls, name, value):
+        # Never overwrites an existing attribute.  Returns True if the
+        # attribute already exists.
+        if name in cls.__dict__:
+            return True
+        setattr(cls, name, value)
+        return False
 
     def build_getter(self, field: Field) -> Callable[[dict], Any]:
         if not self.is_missing(field.default):
@@ -382,12 +398,15 @@ class JsonObjectClassProcessor(object):
     def __call__(self, cls: type) -> type:
         return self.process_class(cls)
 
-def json_object(cls=None, processor: JsonObjectClassProcessor = None, processor_cls=JsonObjectClassProcessor, **kwargs):
+def json_object(_cls=None, processor: JsonObjectClassProcessor = None,
+                processor_cls=JsonObjectClassProcessor, config=None, **kwargs):
     """
     a decorator to mark a class as json format
     """
     if processor is None:
-        processor = processor_cls(**kwargs)
+        if config is None:
+            config = ProcessorConfig(**kwargs)
+        processor = processor_cls(config)
 
     def wrap(cls):
         if cls is None:
@@ -395,13 +414,13 @@ def json_object(cls=None, processor: JsonObjectClassProcessor = None, processor_
             return cls
         return processor(cls)
 
-    # See if we're being called as @flexible_dict or @flexible_dict().
-    if cls is None:
+    # See if we're being called as @json_object or @json_object().
+    if _cls is None:
         # We're called with parens.
         return wrap
 
-    # We're called as @flexible_dict without parens.
-    return wrap(cls)
+    # We're called as @json_object without parens.
+    return wrap(_cls)
 
 # Another way to define a json_object class, just inherit this class.
 class JsonObject(dict):
