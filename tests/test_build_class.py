@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 
+import os
 import json
 from flexible_dict.script.class_builder import build_class_from_json, ClassBuilder
 
+data_dir = os.path.join(os.path.dirname(__file__), 'data')
+json_file = os.path.join(data_dir, "a.json")
+py_file = os.path.join(data_dir, "a.py")
+
 def test_class_builder():
-    json_file = "data/a.json"
-    py_file = "data/a.py"
     with open(json_file, encoding="utf-8") as f:
         d = json.load(f)
     builder = ClassBuilder()
@@ -16,4 +19,4 @@ def test_class_builder():
     assert actual_code == expected_code, actual_code
 
 def test_build_class():
-    build_class_from_json(["--name", "A", "--file", "data/a.json", "--output", "data/a.py"])
+    build_class_from_json(["--name", "A", "--file", json_file, "--output", py_file])

@@ -1,9 +1,40 @@
 # -*- coding: utf-8 -*-
 
 from typing import List, Optional
+from flexible_dict import json_object, MISSING, Field
+
+@json_object
+class A:
+    t: str
+    k: int = 4
+
+@json_object
+class B:
+    i: int = 3
+    j: str = None
+    s: float
+    s2: str = Field(key="k2")
+    g: int = MISSING
+    l: List[int]
+    a: A
+
+def test_read():
+    b = B(dict(i=3, k2='hello', a=dict(t='a2', k=7)))
+    assert b.i == b['i'] == 3
+    assert b.j is None
+    assert 'j' not in b
+    assert b.s is None
+    assert 's' not in b
+    assert b.s2 == b['k2'] == 'hello'
+    try:
+        b.g
+    except KeyError:
+        pass
+    else:
+        assert False
+    # assert type(b.a) == A
 
 def test_json_object():
-    from flexible_dict import json_object, MISSING
     @json_object
     class A:
         i: int = 3
@@ -23,6 +54,13 @@ def test_json_object():
     a.j = 10
     assert a.j == 10
     assert a['j'] == 10
+
+    import os
+    import sys
+    print(f"interpreter: {sys.executable}")
+    with open(os.path.expanduser('~/Downloads/t.txt'), 'w') as f:
+        f.write(sys.executable)
+    # raise RuntimeError(sys.executable)
 
 def test_JsonObject():
     from flexible_dict import JsonObject, MISSING
@@ -71,3 +109,4 @@ def test_JsonObject():
     assert b.t[1].j == "t2"
 
     assert b.w.i == 15
+
