@@ -32,7 +32,7 @@ def test_read():
         pass
     else:
         assert False
-    # assert type(b.a) == A
+    assert type(b.a) == A
 
 def test_json_object():
     @json_object

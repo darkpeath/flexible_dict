@@ -9,6 +9,7 @@ extend dict for flexibility
 from typing import (
     Any, Callable, Dict, Tuple,
     Iterable, List, Union,
+    Optional, Type,
 )
 try:
     from typing import Literal
@@ -16,14 +17,23 @@ except ImportError:
     from typing_extensions import Literal
 import sys
 import re
-import dataclasses
 import types
+import builtins
+import dataclasses
 from .adapter import (
     _ENCODER_TYPE, _DECODER_TYPE,
     get_encoder_func,
     get_decoder_func,
     AdapterDetector,
 )
+
+# A sentinel object for default values to signal that a default
+# factory will be used.  This is given a nice repr() which will appear
+# in the function signature of dataclasses' constructors.
+class _HAS_DEFAULT_FACTORY_CLASS:
+    def __repr__(self):
+        return '<factory>'
+_HAS_DEFAULT_FACTORY = _HAS_DEFAULT_FACTORY_CLASS()
 
 # A sentinel object to detect if a parameter is supplied or not.  Use
 # a class to give it a better repr.
@@ -40,10 +50,15 @@ class _FIELD_BASE:
 _FIELD_DICTKEY = _FIELD_BASE('_FIELD_DICTKEY')
 _FIELD_CLASSVAR = _FIELD_BASE('_FIELD_CLASSVAR')
 _FIELD_OBJECTVAR = _FIELD_BASE('_FIELD_OBJECTVAR')
+_FIELD_INITVAR = _FIELD_BASE('_FIELD_INITVAR')
 
 # The name of an attribute on the class where we store the Field
 # objects.  Also used to check if a class is a json_object class.
 _FIELDS = '__json_object_fields__'
+
+# The name of the function, that if it exists, is called at the end of
+# __init__.
+_POST_INIT_NAME = '__post_init__'
 
 # String regex that string annotations for ClassVar or InitVar must match.
 # Allows "identifier.identifier[" or "identifier[".
@@ -94,7 +109,7 @@ class Field:
 
     # auto detect value
     name: str = None
-    type: type = None
+    type: Any = None
     _field_type: _FIELD_BASE = _FIELD_DICTKEY
 
     # additional metadata
@@ -106,18 +121,37 @@ class ProcessorConfig:
     default_field_value: Any = None
 
     # auto set encoder and decoder for field
-    adapter_detector: AdapterDetector = None
+    adapter_detector: AdapterDetector = dataclasses.field(default_factory=AdapterDetector)
 
     # whether to create a new __init__ function
-    create_init_func: bool = False
+    create_init_func: bool = True
+
 DEFAULT_CONFIG = ProcessorConfig()
 
 class JsonObjectClassProcessor(object):
     """
     parse flexible_dict class, set property and function
     """
-    def __init__(self, config=DEFAULT_CONFIG):
+    def __init__(self, config=DEFAULT_CONFIG, cls=None):
         self.config = config
+        self.cls = cls
+        self.fields = {}
+        self.globals = {}
+        if cls is not None:
+            self._reset(cls)
+
+    def _reset(self, cls):
+        self.cls = cls
+        self.fields = {}
+        if cls.__module__ in sys.modules:
+            self.globals = sys.modules[cls.__module__].__dict__
+        else:
+            # Theoretically this can happen if someone writes
+            # a custom string to cls.__module__.  In which case
+            # such dataclass won't be fully introspectable
+            # (w.r.t. typing.get_type_hints) but will still function
+            # correctly.
+            self.globals = {}
 
     @staticmethod
     def is_missing(value: Any) -> bool:
@@ -300,21 +334,25 @@ class JsonObjectClassProcessor(object):
                         fset=self.build_setter(field) if field.writeable else None,
                         fdel=self.build_deleter(field) if field.deletable else None)
 
-    def add_base(self, cls: type):
+    def add_base(self):
         """
         add dict as base if cls is not a subclass of dict
         """
+        cls = self.cls
         if not issubclass(cls, dict):
             d = dict(cls.__dict__)
             d.pop('__dict__')
             bases = tuple(b for b in cls.__bases__ if b != object) + (dict,)
             cls = type(cls.__name__, bases, d)
+        self.cls = cls
         return cls
 
-    def process_fields(self, cls: type):
+    def process_fields(self):
         """
         process fields in annotations as property
         """
+        cls = self.cls
+
         fields = {}
 
         # Find our base classes in reverse MRO order, and exclude
@@ -375,44 +413,165 @@ class JsonObjectClassProcessor(object):
         # also marks this class as being a json_object.
         setattr(cls, _FIELDS, fields)
 
-    def add_class_methods(self, cls: type):
+        self.fields = fields
+
+    @staticmethod
+    def _create_fn(name: str, args: List[str], body: List[str], *,
+                   globals: Dict[str, Any] = None,
+                   locals: Dict[str, Any] = None,
+                   return_type: Optional[Type] = MISSING):
+        # Note that we mutate locals when exec() is called.  Caller
+        # beware!  The only callers are internal to this module, so no
+        # worries about external callers.
+        if locals is None:
+            locals = {}
+        if 'BUILTINS' not in locals:
+            locals['BUILTINS'] = builtins
+        return_annotation = ''
+        if return_type is not MISSING:
+            locals['_return_type'] = return_type
+            return_annotation = '->_return_type'
+        args = ','.join(args)
+        body = '\n'.join(f'  {b}' for b in body)
+
+        # Compute the text of the entire function.
+        txt = f' def {name}({args}){return_annotation}:\n{body}'
+
+        local_vars = ', '.join(locals.keys())
+        txt = f"def __create_fn__({local_vars}):\n{txt}\n return {name}"
+
+        ns = {}
+        exec(txt, globals, ns)
+        return ns['__create_fn__'](**locals)
+
+    @staticmethod
+    def _field_assign(frozen, name, value, self_name):
+        # If we're a frozen class, then assign to our fields in __init__
+        # via object.__setattr__.  Otherwise, just use a simple
+        # assignment.
+        #
+        # self_name is what "self" is called in this function: don't
+        # hard-code "self", since that might be a field name.
+        if frozen:
+            return f'BUILTINS.object.__setattr__({self_name},{name!r},{value})'
+        return f'{self_name}.{name}={value}'
+
+    def _init_fn(self, fields: List[Field], self_name: str, d_name='_d', ds_name='__', kwargs_name=''):
+        # fields contains both real fields and InitVar pseudo-fields.
+
+        locals: dict = {
+            'MISSING': MISSING,
+            'dict': dict,
+        }
+        locals.update((f'_type_{f.name}', f.type) for f in fields)
+        locals.update((f'_key_{f.name}', f.key) for f in fields)
+
+        # all args
+        args = [self_name, f'*{ds_name}:dict'] + [f'{f.name}:_type_{f.name}=MISSING' for f in fields]
+        if kwargs_name:
+            args.append(f'**{kwargs_name}')
+
+        # update by given dicts
+        body_lines = [
+            f"for {d_name} in {ds_name}:",
+            f" print({d_name})",
+            f" {self_name}.update({d_name})",
+        ]
+
+        # update by kwargs
+        if kwargs_name:
+            body_lines.append(f"{self_name}.update({kwargs_name})")
+
+        # update by name
+        for f in fields:
+            if f._field_type is _FIELD_DICTKEY:
+                # value stored in dict would be correctly encoded by setting with `.`
+                body_lines.extend([
+                    f"if {f.name} is not MISSING:",
+                    f" {self_name}.{f.name} = {f.name}",
+                    f"elif _key_{f.name} in {self_name}:",
+                    f" {self_name}.{f.name} = {self_name}[_key_{f.name}]"
+                ])
+            elif f._field_type is _FIELD_CLASSVAR:
+                body_lines.extend([
+                    f"if {f.name} is not MISSING:",
+                    f" {self_name}.{f.name} = {f.name}",
+                ])
+
+        # body lines would not be empty
+        # If no body lines, use 'pass'.
+        # if not body_lines:
+        #     body_lines = ['pass']
+
+        return self._create_fn('__init__', args, body_lines,
+                               locals=locals, globals=self.globals, return_type=None)
+
+    def add_init_func(self):
+        """
+        add __init__ function
+        """
+        # Include InitVars and regular fields (so, not ClassVars).
+        allowed_field_types = (
+            _FIELD_DICTKEY,
+            _FIELD_OBJECTVAR,
+            _FIELD_INITVAR,
+        )
+        fields = [f for f in self.fields.values() if f._field_type in allowed_field_types]
+        self._set_new_attribute(self.cls, '__init__', self._init_fn(
+            fields,
+            'self',
+            '_d',
+            '__',
+            '__kwargs',
+        ))
+
+    def add_class_methods(self):
         """
         add some class methods
         """
+        if self.config.create_init_func:
+            self.add_init_func()
 
-    def process_class(self, cls: type) -> type:
+    def _process(self):
         """
-        entry point to process a class as json object
+        process pipeline
         """
+        if self.cls is None:
+            raise ValueError("Class not given.")
+
         # first, ensure the class be a subclass of dict
-        cls = self.add_base(cls)
+        self.add_base()
 
         # then, process fields to access them in a flexible way
-        self.process_fields(cls)
+        self.process_fields()
 
         # finally, add some flexible methods
-        self.add_class_methods(cls)
+        self.add_class_methods()
 
-        return cls
+    def __call__(self, cls: type = None) -> type:
+        if cls is not None:
+            self._reset(cls)
+        self._process()
+        return self.cls
 
-    def __call__(self, cls: type) -> type:
-        return self.process_class(cls)
-
-def json_object(_cls=None, processor: JsonObjectClassProcessor = None,
-                processor_cls=JsonObjectClassProcessor, config=None, **kwargs):
+def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
+                default_field_value=None, adapter_detector: AdapterDetector = None,
+                create_init_func=True, **kwargs):
     """
     a decorator to mark a class as json format
     """
-    if processor is None:
-        if config is None:
-            config = ProcessorConfig(**kwargs)
-        processor = processor_cls(config)
+    if config is None:
+        config = ProcessorConfig(
+            default_field_value=default_field_value,
+            adapter_detector=adapter_detector or AdapterDetector(),
+            create_init_func=create_init_func,
+        )
 
     def wrap(cls):
         if cls is None:
             # without this line, pycharm code hints would disappear.
             return cls
-        return processor(cls)
+        return processor(config)(cls)
 
     # See if we're being called as @json_object or @json_object().
     if _cls is None:
