@@ -19,6 +19,7 @@ import sys
 import re
 import types
 import builtins
+import warnings
 import dataclasses
 from .adapter import (
     _ENCODER_TYPE, _DECODER_TYPE,
@@ -647,6 +648,7 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
 # Another way to define a json_object class, just inherit this class.
 class JsonObject(dict):
     def __init_subclass__(cls):
+        warnings.warn("Use decorator `json_object()` instead", DeprecationWarning)
         super().__init_subclass__()
         JsonObjectClassProcessor()(cls)
 
