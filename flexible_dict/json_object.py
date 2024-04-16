@@ -126,6 +126,13 @@ class ProcessorConfig:
     # whether to create a new __init__ function
     create_init_func: bool = True
 
+    # whether to create a function to iter all field values
+    create_iter_func: bool = True
+
+    # method name for field iter;
+    # name can be 'items' therefor supper method wound be overwritten.
+    iter_func_name: str = 'field_items'
+
 DEFAULT_CONFIG = ProcessorConfig()
 
 class JsonObjectClassProcessor(object):
@@ -417,19 +424,19 @@ class JsonObjectClassProcessor(object):
 
     @staticmethod
     def _create_fn(name: str, args: List[str], body: List[str], *,
-                   globals: Dict[str, Any] = None,
-                   locals: Dict[str, Any] = None,
+                   _globals: Dict[str, Any] = None,
+                   _locals: Dict[str, Any] = None,
                    return_type: Optional[Type] = MISSING):
         # Note that we mutate locals when exec() is called.  Caller
         # beware!  The only callers are internal to this module, so no
         # worries about external callers.
-        if locals is None:
-            locals = {}
-        if 'BUILTINS' not in locals:
-            locals['BUILTINS'] = builtins
+        if _locals is None:
+            _locals = {}
+        if 'BUILTINS' not in _locals:
+            _locals['BUILTINS'] = builtins
         return_annotation = ''
         if return_type is not MISSING:
-            locals['_return_type'] = return_type
+            _locals['_return_type'] = return_type
             return_annotation = '->_return_type'
         args = ','.join(args)
         body = '\n'.join(f'  {b}' for b in body)
@@ -437,12 +444,12 @@ class JsonObjectClassProcessor(object):
         # Compute the text of the entire function.
         txt = f' def {name}({args}){return_annotation}:\n{body}'
 
-        local_vars = ', '.join(locals.keys())
+        local_vars = ', '.join(_locals.keys())
         txt = f"def __create_fn__({local_vars}):\n{txt}\n return {name}"
 
         ns = {}
-        exec(txt, globals, ns)
-        return ns['__create_fn__'](**locals)
+        exec(txt, _globals, ns)
+        return ns['__create_fn__'](**_locals)
 
     @staticmethod
     def _field_assign(frozen, name, value, self_name):
@@ -503,7 +510,7 @@ class JsonObjectClassProcessor(object):
         #     body_lines = ['pass']
 
         return self._create_fn('__init__', args, body_lines,
-                               locals=locals, globals=self.globals, return_type=None)
+                               _locals=locals, _globals=self.globals, return_type=None)
 
     def add_init_func(self):
         """
@@ -524,12 +531,54 @@ class JsonObjectClassProcessor(object):
             '___',
         ))
 
+    def _iter_fields_fn(self, fields: List[Field], func_name: str, self_name: str):
+        _locals = {
+            f'_name_{f.name}': f.name
+            for f in fields
+        }
+
+        args = [self_name]
+        return_type = Iterable[Tuple[str, Any]]
+
+        body_lines = []
+
+        # update by name
+        for f in fields:
+            if f._field_type is _FIELD_DICTKEY:
+                body_lines.extend([
+                    f"try:",
+                    f" yield (_name_{f.name}, {self_name}.{f.name})",
+                    f"except:"
+                    f" pass"
+                ])
+
+        # If no body lines, return empty tuple.
+        if not body_lines:
+            body_lines = ['return ()']
+
+        return self._create_fn(func_name, args, body_lines,
+                               _locals=_locals, _globals=self.globals,
+                               return_type=return_type)
+
+    def add_iter_fields_func(self):
+        # Include only field for dict key
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        func_name = self.config.iter_func_name
+        self._set_new_attribute(self.cls, func_name, self._iter_fields_fn(
+            fields,
+            func_name,
+            'self',
+        ))
+
     def add_class_methods(self):
         """
         add some class methods
         """
         if self.config.create_init_func:
             self.add_init_func()
+
+        if self.config.create_iter_func:
+            self.add_iter_fields_func()
 
     def _process(self):
         """
@@ -547,7 +596,7 @@ class JsonObjectClassProcessor(object):
         # finally, add some flexible methods
         self.add_class_methods()
 
-    def __call__(self, cls: type = None) -> type:
+    def __call__(self, cls: type = None) -> Type[dict]:
         if cls is not None:
             self._reset(cls)
         self._process()

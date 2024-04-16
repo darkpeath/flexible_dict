@@ -34,6 +34,38 @@ def test_read():
         assert False
     assert type(b.a) == A
 
+def test_iter_fields():
+    b = B(i=3, s2='hello', a=dict(t='a2', k=7), g=4)
+    b['j'] = 'we'
+    actual = list(b.field_items())
+    expected = [
+        ('i', 3),
+        ('j', 'we'),
+        ('s', None),
+        ('s2', 'hello'),
+        ('g', 4),
+        ('l', None),
+        ('a', A(dict(t='a2', k=7))),
+    ]
+    assert len(actual) == len(expected)
+    for y, y0 in zip(actual, expected):
+        assert y == y0, f"{y} {y0}"
+
+def test_iter_items():
+    b = B(i=3, s2='hello', a=dict(t='a2', k=7), g=4)
+    b['j'] = 'we'
+    actual = list(b.items())
+    expected = [
+        ('i', 3),
+        ('k2', 'hello'),
+        ('g', 4),
+        ('a', A(dict(t='a2', k=7))),
+        ('j', 'we'),
+    ]
+    assert len(actual) == len(expected)
+    for y, y0 in zip(actual, expected):
+        assert y == y0, f"{y} {y0}"
+
 def test_json_object():
     @json_object
     class A:
