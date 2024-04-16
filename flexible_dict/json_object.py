@@ -456,7 +456,7 @@ class JsonObjectClassProcessor(object):
             return f'BUILTINS.object.__setattr__({self_name},{name!r},{value})'
         return f'{self_name}.{name}={value}'
 
-    def _init_fn(self, fields: List[Field], self_name: str, d_name='_d', ds_name='__', kwargs_name=''):
+    def _init_fn(self, fields: List[Field], self_name: str, d_name='_', ds_name='__', kwargs_name='___'):
         # fields contains both real fields and InitVar pseudo-fields.
 
         locals: dict = {
@@ -474,7 +474,6 @@ class JsonObjectClassProcessor(object):
         # update by given dicts
         body_lines = [
             f"for {d_name} in {ds_name}:",
-            f" print({d_name})",
             f" {self_name}.update({d_name})",
         ]
 
@@ -520,9 +519,9 @@ class JsonObjectClassProcessor(object):
         self._set_new_attribute(self.cls, '__init__', self._init_fn(
             fields,
             'self',
-            '_d',
+            '_',
             '__',
-            '__kwargs',
+            '___',
         ))
 
     def add_class_methods(self):
