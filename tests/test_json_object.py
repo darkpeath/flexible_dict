@@ -66,6 +66,32 @@ def test_iter_items():
     for y, y0 in zip(actual, expected):
         assert y == y0, f"{y} {y0}"
 
+def test_overwrite_items():
+    @json_object(iter_func_name='items')
+    class C:
+        i: int = 3
+        j: str = None
+        s: float
+        s2: str = Field(key="k2")
+        g: int = MISSING
+        l: List[int]
+        a: A
+    c = C(i=3, s2='hello', a=dict(t='a2', k=7), g=4)
+    c['j'] = 'we'
+    actual = list(c.items())
+    expected = [
+        ('i', 3),
+        ('j', 'we'),
+        ('s', None),
+        ('s2', 'hello'),
+        ('g', 4),
+        ('l', None),
+        ('a', A(dict(t='a2', k=7))),
+    ]
+    assert len(actual) == len(expected)
+    for y, y0 in zip(actual, expected):
+        assert y == y0, f"{y} {y0}"
+
 def test_json_object():
     @json_object
     class A:

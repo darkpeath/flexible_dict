@@ -579,6 +579,7 @@ class JsonObjectClassProcessor(object):
 
         if self.config.create_iter_func:
             self.add_iter_fields_func()
+            # TODO 2024/4/16  if function name is `items`, overwrite method `keys()` and method `values()`
 
     def _process(self):
         """
@@ -604,7 +605,8 @@ class JsonObjectClassProcessor(object):
 
 def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
                 default_field_value=None, adapter_detector: AdapterDetector = None,
-                create_init_func=True, **kwargs):
+                create_init_func=True, create_iter_func=True, iter_func_name='field_items',
+                **kwargs):
     """
     a decorator to mark a class as json format
     """
@@ -613,6 +615,8 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
             default_field_value=default_field_value,
             adapter_detector=adapter_detector or AdapterDetector(),
             create_init_func=create_init_func,
+            create_iter_func=create_iter_func,
+            iter_func_name=iter_func_name,
         )
 
     def wrap(cls):
