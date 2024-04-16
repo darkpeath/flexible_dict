@@ -92,6 +92,30 @@ def test_overwrite_items():
     for y, y0 in zip(actual, expected):
         assert y == y0, f"{y} {y0}"
 
+def test_ignore_field():
+    @json_object(ignore_not_exists_filed_when_iter=True)
+    class C:
+        i: int = 3
+        j: str = None
+        s: float
+        s2: str = Field(key="k2")
+        g: int = MISSING
+        l: List[int]
+        a: A
+    c = C(i=3, s2='hello', a=dict(t='a2', k=7), g=4)
+    c['j'] = 'we'
+    actual = list(c.field_items())
+    expected = [
+        ('i', 3),
+        ('j', 'we'),
+        ('s2', 'hello'),
+        ('g', 4),
+        ('a', A(dict(t='a2', k=7))),
+    ]
+    assert len(actual) == len(expected)
+    for y, y0 in zip(actual, expected):
+        assert y == y0, f"{y} {y0}"
+
 def test_json_object():
     @json_object
     class A:

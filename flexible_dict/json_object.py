@@ -133,6 +133,9 @@ class ProcessorConfig:
     # name can be 'items' therefor supper method wound be overwritten.
     iter_func_name: str = 'field_items'
 
+    # ignore not exists field for the new field iter function
+    ignore_not_exists_filed_when_iter: bool = False
+
 DEFAULT_CONFIG = ProcessorConfig()
 
 class JsonObjectClassProcessor(object):
@@ -536,6 +539,7 @@ class JsonObjectClassProcessor(object):
             f'_name_{f.name}': f.name
             for f in fields
         }
+        _locals.update((f'_key_{f.name}', f.key) for f in fields)
 
         args = [self_name]
         return_type = Iterable[Tuple[str, Any]]
@@ -545,12 +549,18 @@ class JsonObjectClassProcessor(object):
         # update by name
         for f in fields:
             if f._field_type is _FIELD_DICTKEY:
-                body_lines.extend([
-                    f"try:",
-                    f" yield (_name_{f.name}, {self_name}.{f.name})",
-                    f"except:"
-                    f" pass"
-                ])
+                if self.config.ignore_not_exists_filed_when_iter:
+                    body_lines.extend([
+                        f"if _key_{f.name} in {self_name}:",
+                        f" yield (_name_{f.name}, {self_name}.{f.name})",
+                    ])
+                else:
+                    body_lines.extend([
+                        f"try:",
+                        f" yield (_name_{f.name}, {self_name}.{f.name})",
+                        f"except:"
+                        f" pass"
+                    ])
 
         # If no body lines, return empty tuple.
         if not body_lines:
@@ -617,6 +627,7 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
             create_init_func=create_init_func,
             create_iter_func=create_iter_func,
             iter_func_name=iter_func_name,
+            **kwargs
         )
 
     def wrap(cls):
