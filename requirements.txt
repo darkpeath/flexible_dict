@@ -1,4 +1,4 @@
 setuptools>=42
-setuptools_scm[toml]>=3.4
+setuptools-scm[toml]>=3.4
 wheel
 inflect
