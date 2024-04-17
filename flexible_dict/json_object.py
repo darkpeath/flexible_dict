@@ -426,11 +426,12 @@ class JsonObjectClassProcessor(object):
 
         self.fields = fields
 
-    @staticmethod
-    def _create_fn(name: str, args: List[str], body: List[str], *,
+    def _create_fn(self, name: str, args: List[str], body: List[str], *,
                    _globals: Dict[str, Any] = None,
                    _locals: Dict[str, Any] = None,
                    return_type: Optional[Type] = MISSING):
+        _globals = _globals or self.globals or {}
+
         # Note that we mutate locals when exec() is called.  Caller
         # beware!  The only callers are internal to this module, so no
         # worries about external callers.
@@ -514,7 +515,7 @@ class JsonObjectClassProcessor(object):
         #     body_lines = ['pass']
 
         return self._create_fn('__init__', args, body_lines,
-                               _locals=locals, _globals=self.globals, return_type=None)
+                               _locals=locals, return_type=None)
 
     def add_init_func(self):
         """
@@ -535,7 +536,7 @@ class JsonObjectClassProcessor(object):
             '___',
         ))
 
-    def _iter_fields_fn(self, fields: List[Field], func_name: str, self_name: str):
+    def _iter_field_items_fn(self, fields: List[Field], func_name: str, self_name: str, res_name='res'):
         _locals = {
             f'_name_{f.name}': f.name
             for f in fields
@@ -567,19 +568,44 @@ class JsonObjectClassProcessor(object):
         if not body_lines:
             body_lines = ['return ()']
 
-        return self._create_fn(func_name, args, body_lines,
-                               _locals=_locals, _globals=self.globals,
-                               return_type=return_type)
+        return self._create_fn(func_name, args, body_lines, _locals=_locals, return_type=return_type)
+
+    def _iter_field_keys_fn(self, func_name: str, self_name: str, k_name='k', v_name='v'):
+        args = [self_name]
+        return_type = Iterable[str]
+
+        body_lines = [
+            f"for {k_name}, {v_name} in {self_name}.{self.config.iter_func_name}:",
+            f" yield {k_name}"
+        ]
+
+        return self._create_fn(func_name, args, body_lines, return_type=return_type)
+
+    def _iter_field_values_fn(self, func_name: str, self_name: str, k_name='k', v_name='v'):
+        args = [self_name]
+        return_type = Iterable[str]
+
+        body_lines = [
+            f"for {k_name}, {v_name} in {self_name}.{self.config.iter_func_name}:",
+            f" yield {v_name}"
+        ]
+
+        return self._create_fn(func_name, args, body_lines, return_type=return_type)
 
     def add_iter_fields_func(self):
         # Include only field for dict key
         fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
         func_name = self.config.iter_func_name
-        self._set_new_attribute(self.cls, func_name, self._iter_fields_fn(
+        self._set_new_attribute(self.cls, func_name, self._iter_field_items_fn(
             fields,
             func_name,
             'self',
         ))
+
+        # if function name is `items`, overwrite method `keys()` and method `values()`
+        if func_name == 'items':
+            self._set_new_attribute(self.cls, 'keys', self._iter_field_keys_fn('keys', 'self'))
+            self._set_new_attribute(self.cls, 'values', self._iter_field_values_fn('values', 'self'))
 
     def add_class_methods(self):
         """
@@ -590,7 +616,6 @@ class JsonObjectClassProcessor(object):
 
         if self.config.create_iter_func:
             self.add_iter_fields_func()
-            # TODO 2024/4/16  if function name is `items`, overwrite method `keys()` and method `values()`
 
     def _process(self):
         """
