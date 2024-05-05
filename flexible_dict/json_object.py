@@ -109,8 +109,8 @@ class Field:
     decoder: Union[_DECODER_TYPE, None] = 'auto'    # cast value type when read from dict
 
     # auto detect value
-    name: str = None
-    type: Any = None
+    name: str = dataclasses.field(init=False, default=None)
+    type: Any = dataclasses.field(init=False, default=None)
     _field_type: _FIELD_BASE = _FIELD_DICTKEY
 
     # additional metadata
