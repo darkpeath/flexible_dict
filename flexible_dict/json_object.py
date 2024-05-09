@@ -534,13 +534,7 @@ class JsonObjectClassProcessor(object):
         """
         add __init__ function
         """
-        # Include InitVars and regular fields (so, not ClassVars).
-        allowed_field_types = (
-            _FIELD_DICTKEY,
-            _FIELD_OBJECTVAR,
-            _FIELD_INITVAR,
-        )
-        fields = [f for f in self.fields.values() if f._field_type in allowed_field_types]
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
         self._set_new_attribute(self.cls, '__init__', self._init_fn(
             fields,
             'self',
@@ -652,7 +646,7 @@ class JsonObjectClassProcessor(object):
         self._process()
         return self.cls
 
-def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
+def json_object(_cls=None, processor=JsonObjectClassProcessor, *, config=None,
                 getter_default=None, adapter_detector: AdapterDetector = None,
                 create_init_func=True, create_iter_func=True, iter_func_name='field_items',
                 **kwargs):
