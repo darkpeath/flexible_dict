@@ -93,33 +93,37 @@ class Field:
     writeable: bool = True
     deletable: bool = True
 
-    # default value setting
-    default: Any = None     # default value when the key not exists
-    default_factory: Callable[[dict], Any] = MISSING     # a function to get a value from the dict
+    # default value when init the dict
+    init_default: Any = MISSING
+    # a function to build default value when init the dict
+    init_default_factory: Callable[[], Any] = MISSING
 
-    # decide what scope the field belong to
-    static: bool = False    # a class property
-    exclude: bool = False   # exclude from dict key and mark as object property
-
-    # # if set as false, an exception will be raised when the key not exists
-    check_exist_before_delete: bool = True
-
+    # default value when access an absent key
+    getter_default: Any = MISSING
+    # a function to build default value when access an absent key
+    getter_default_factory0: Callable[[], Any] = MISSING
+    # a function to get value for the dict when access an absent key
+    getter_default_factory1: Callable[[dict], Any] = MISSING
+    
     # functions to cast value type when write or read dict
     encoder: Union[_ENCODER_TYPE, Literal['auto'], None] = 'auto'    # cast value type when write to dict
     decoder: Union[_DECODER_TYPE, None] = 'auto'    # cast value type when read from dict
 
+    # if set as false, an exception will be raised when the key not exists
+    check_exist_before_delete: bool = True
+
     # auto detect value
     name: str = dataclasses.field(init=False, default=None)
     type: Any = dataclasses.field(init=False, default=None)
-    _field_type: _FIELD_BASE = _FIELD_DICTKEY
+    _field_type: _FIELD_BASE = dataclasses.field(init=False, default=_FIELD_DICTKEY)
 
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 @dataclasses.dataclass
 class ProcessorConfig:
-    # default value config on the class for field without init value
-    default_field_value: Any = None
+    # default value when access an absent key in class scope
+    getter_default: Any = MISSING
 
     # auto set encoder and decoder for field
     adapter_detector: AdapterDetector = dataclasses.field(default_factory=AdapterDetector)
@@ -164,6 +168,36 @@ class JsonObjectClassProcessor(object):
             # correctly.
             self.globals = {}
 
+    def _create_fn(self, name: str, args: List[str], body: List[str], *,
+                   _globals: Dict[str, Any] = None,
+                   _locals: Dict[str, Any] = None,
+                   return_type: Optional[Type] = MISSING):
+        _globals = _globals or self.globals or {}
+
+        # Note that we mutate locals when exec() is called.  Caller
+        # beware!  The only callers are internal to this module, so no
+        # worries about external callers.
+        if _locals is None:
+            _locals = {}
+        if 'BUILTINS' not in _locals:
+            _locals['BUILTINS'] = builtins
+        return_annotation = ''
+        if return_type is not MISSING:
+            _locals['_return_type'] = return_type
+            return_annotation = '->_return_type'
+        args = ','.join(args)
+        body = '\n'.join(f'  {b}' for b in body)
+
+        # Compute the text of the entire function.
+        txt = f' def {name}({args}){return_annotation}:\n{body}'
+
+        local_vars = ', '.join(_locals.keys())
+        txt = f"def __create_fn__({local_vars}):\n{txt}\n return {name}"
+
+        ns = {}
+        exec(txt, _globals, ns)
+        return ns['__create_fn__'](**_locals)
+
     @staticmethod
     def is_missing(value: Any) -> bool:
         return value is MISSING
@@ -171,11 +205,6 @@ class JsonObjectClassProcessor(object):
     @staticmethod
     def _is_classvar(a_type, typing):
         return dataclasses._is_classvar(a_type, typing)
-
-    @staticmethod
-    def _is_objectvar(a_type, module):
-        # The module we're checking against is the module we're currently in.
-        return (a_type is module.ObjectVar or type(a_type) is module.ObjectVar)
 
     @staticmethod
     def _is_type(annotation, cls, a_module, a_type, is_type_predicate):
@@ -187,14 +216,14 @@ class JsonObjectClassProcessor(object):
         """
         # If the default value isn't derived from Field, then it's only a
         # normal default value.  Convert it to a Field().
-        default = getattr(cls, a_name, self.config.default_field_value)
+        default = getattr(cls, a_name, MISSING)
         if isinstance(default, Field):
             f = default
         else:
             if isinstance(default, types.MemberDescriptorType):
                 # This is a field in __slots__, so it has no default value.
-                default = self.config.default_field_value
-            f = Field(default=default)
+                default = MISSING
+            f = Field(init_default=default)
 
         # Only at this point do we know the name and the type.  Set them.
         f.name = a_name
@@ -230,23 +259,13 @@ class JsonObjectClassProcessor(object):
                         and self._is_type(f.type, cls, typing, typing.ClassVar, self._is_classvar))):
                 f._field_type = _FIELD_CLASSVAR
 
-        # If the type is ObjectVar, or if it's a matching string annotation,
-        # then it's an ObjectVar.
-        if f._field_type is _FIELD_DICTKEY:
-            # The module we're checking against is the module we're currently in.
-            module = sys.modules[__name__]
-            if (self._is_objectvar(a_type, module)
-                    or (isinstance(f.type, str)
-                        and self._is_type(f.type, cls, dataclasses, dataclasses.InitVar, self._is_objectvar))):
-                f._field_type = _FIELD_OBJECTVAR
-
         # Validations for individual fields.  This is delayed until now,
         # instead of in the Field() constructor, since only here do we
         # know the field name, which allows for better error reporting.
 
         # Special restrictions for ClassVar.
         if f._field_type is _FIELD_CLASSVAR:
-            if not self.is_missing(f.default_factory):
+            if not self.is_missing(f.init_default_factory):
                 raise TypeError(f'field {f.name} cannot have a default factory')
             # Should I check for other field settings? default_factory
             # seems the most serious to check for.  Maybe add others.  For
@@ -255,16 +274,13 @@ class JsonObjectClassProcessor(object):
             # ClassVar and InitVar to specify init=<anything>.
 
         # For real fields, disallow mutable defaults for known types.
-        if (f._field_type in (_FIELD_DICTKEY, _FIELD_OBJECTVAR)
-                and isinstance(f.default, (list, dict, set))):
-            raise ValueError(f'mutable default {type(f.default)} for field '
-                             f'{f.name} is not allowed: use default_factory')
-
-        # Set value if f is ClassVar or ObjectVar.
-        if f._field_type is _FIELD_CLASSVAR:
-            f.static = True
-        if f._field_type is _FIELD_OBJECTVAR:
-            f.exclude = True
+        if f._field_type in (_FIELD_DICTKEY, _FIELD_OBJECTVAR):
+            if isinstance(f.getter_default, (list, dict, set)):
+                raise ValueError(f'mutable getter_default {type(f.getter_default)} for field '
+                                 f'{f.name} is not allowed: use getter_default_factory0 or getter_default_factory1')
+            if isinstance(f.init_default, (list, dict, set)):
+                raise ValueError(f'mutable init_default {type(f.init_default)} for field '
+                                 f'{f.name} is not allowed: use init_default_factory')
 
         # if encoder/decoder set auto, detect whether an encoder/decoder is needed
         if f.encoder == 'auto':
@@ -291,54 +307,86 @@ class JsonObjectClassProcessor(object):
         setattr(cls, name, value)
         return False
 
-    def build_getter(self, field: Field) -> Callable[[dict], Any]:
-        if not self.is_missing(field.default):
-            if callable(field.decoder):
-                def getter(d):
-                    if field.key in d:
-                        return field.decoder(d[field.key])
-                    return field.default
-            else:
-                def getter(d):
-                    return d.get(field.key, field.default)
-        elif not self.is_missing(field.default_factory):
-            if callable(field.decoder):
-                def getter(d):
-                    if field.key in d:
-                        return field.decoder(d[field.key])
-                    return field.default_factory(d)
-            else:
-                def getter(d):
-                    if field.key in d:
-                        return d[field.key]
-                    return field.default_factory(d)
-        else:
-            if callable(field.decoder):
-                def getter(d):
-                    return field.decoder(d[field.key])
-            else:
-                def getter(d):
-                    return d[field.key]
-        return getter
+    def build_getter(self, field: Field, *, method_name='getter', var_dict='_d', var_key='_key',
+                     var_decoder='_decoder', var_default='_default') -> Callable[[dict], Any]:
+        _locals: dict = {
+            var_key: field.key,
+        }
 
-    def build_setter(self, field: Field) -> Callable[[dict, Any], Any]:
-        if callable(field.encoder):
-            def setter(d, value):
-                d[field.key] = field.encoder(value)
-        else:
-            def setter(d, value):
-                d[field.key] = value
-        return setter
+        should_decode = callable(field.decoder)
+        if should_decode:
+            _locals[var_decoder] = field.decoder
 
-    def build_deleter(self, field: Field) -> Callable[[dict], Any]:
+        if field.getter_default is not MISSING:
+            default_type, default_value = 0, field.getter_default
+        elif field.getter_default_factory0 is not MISSING:
+            default_type, default_value = 1, field.getter_default_factory0
+        elif field.getter_default_factory1 is not MISSING:
+            default_type, default_value = 2, field.getter_default_factory1
+        elif self.config.getter_default is not MISSING:
+            default_type, default_value = 0, self.config.getter_default
+        else:
+            default_type, default_value = -2, None
+
+        def gen_body_lines() -> List[str]:
+            if default_type == -2:
+                # if no default defined, just get key value and decode
+                if should_decode:
+                    return [f"return {var_decoder}({var_dict}[{var_key}])"]
+                return [f"return {var_dict}[{var_key}]"]
+            lines = [f"if {var_key} in {var_dict}:"]
+            if should_decode:
+                lines.append(f" return {var_decoder}({var_dict}[{var_key}])")
+            else:
+                lines.append(f" return {var_dict}[{var_key}]")
+            _locals[var_default] = default_value
+            if default_type == 0:
+                lines.append(f"return {var_default}")
+            elif default_type == 1:
+                lines.append(f"return {var_default}()")
+            else:
+                assert default_type == 2
+                lines.append(f"return {var_default}({var_dict})")
+            return lines
+
+        body_lines = gen_body_lines()
+
+        return self._create_fn(method_name, [var_dict], body_lines, _locals=_locals)
+
+    def build_setter(self, field: Field, *, method_name='setter', var_dict='_d', var_value='_value',
+                     var_key='_key', var_encoder='_encoder') -> Callable[[dict, Any], Any]:
+        _locals: dict = {
+            var_key: field.key,
+        }
+
+        should_encode = callable(field.encoder)
+        if should_encode:
+            _locals[var_encoder] = field.encoder
+
+        if should_encode:
+            body_lines = [f"{var_dict}[{var_key}] = {var_encoder}({var_value})"]
+        else:
+            body_lines = [f"{var_dict}[{var_key}] = {var_value}"]
+
+        return self._create_fn(method_name, [var_dict, var_value], body_lines, _locals=_locals)
+
+    def build_deleter(self, field: Field, *, method_name='deleter', var_dict='_d',
+                      var_key='_key') -> Callable[[dict], Any]:
+        _locals: dict = {
+            var_key: field.key,
+        }
+
         if field.check_exist_before_delete:
-            def deleter(d):
-                if field.key in d:
-                    d.pop(field.key)
+            body_lines = [
+                f"if {var_key} in {var_dict}:",
+                f" {var_dict}.pop({var_key})",
+            ]
         else:
-            def deleter(d):
-                d.pop(field.key)
-        return deleter
+            body_lines = [
+                f"{var_dict}.pop({var_key})",
+            ]
+
+        return self._create_fn(method_name, [var_dict], body_lines, _locals=_locals)
 
     def build_property(self, field: Field) -> property:
         return property(fget=self.build_getter(field) if field.readable else None,
@@ -395,22 +443,15 @@ class JsonObjectClassProcessor(object):
         # we can.
         for name, a_type in cls_annotations.items():
             field = self.get_field(cls, name, a_type)
-            if field.static:
-                # It's not suggested to define a class field in this way.
-                if self.is_missing(field.default):
-                    delattr(cls, name)
-                else:
-                    setattr(cls, name, field.default)
-            elif field.exclude:
-                if self.is_missing(field.default) and self.is_missing(field.default_factory):
-                    delattr(cls, name)
-                elif not self.is_missing(field.default):
-                    # Actually it should be set to the obj when init,
-                    # this is a temp way to set as a class value.
-                    setattr(cls, name, field.default)
-                else:
-                    # Rare situation should set a dynamic default value.
-                    raise ValueError("not allowed to specify a factory.")
+            if field._field_type is _FIELD_CLASSVAR:
+                # It's not suggested to define a class field like `a: ClassVar[int] = Field(init_default=1)`.
+                # better to define like `a: ClassVar[int] = 1`.
+                # But deal field here just in case.
+                if isinstance(getattr(cls, field.name, None), Field):
+                    if self.is_missing(field.init_default):
+                        delattr(cls, name)
+                    else:
+                        setattr(cls, name, field.init_default)
             else:
                 setattr(cls, name, self.build_property(field))
                 fields[name] = field
@@ -426,36 +467,6 @@ class JsonObjectClassProcessor(object):
 
         self.fields = fields
 
-    def _create_fn(self, name: str, args: List[str], body: List[str], *,
-                   _globals: Dict[str, Any] = None,
-                   _locals: Dict[str, Any] = None,
-                   return_type: Optional[Type] = MISSING):
-        _globals = _globals or self.globals or {}
-
-        # Note that we mutate locals when exec() is called.  Caller
-        # beware!  The only callers are internal to this module, so no
-        # worries about external callers.
-        if _locals is None:
-            _locals = {}
-        if 'BUILTINS' not in _locals:
-            _locals['BUILTINS'] = builtins
-        return_annotation = ''
-        if return_type is not MISSING:
-            _locals['_return_type'] = return_type
-            return_annotation = '->_return_type'
-        args = ','.join(args)
-        body = '\n'.join(f'  {b}' for b in body)
-
-        # Compute the text of the entire function.
-        txt = f' def {name}({args}){return_annotation}:\n{body}'
-
-        local_vars = ', '.join(_locals.keys())
-        txt = f"def __create_fn__({local_vars}):\n{txt}\n return {name}"
-
-        ns = {}
-        exec(txt, _globals, ns)
-        return ns['__create_fn__'](**_locals)
-
     @staticmethod
     def _field_assign(frozen, name, value, self_name):
         # If we're a frozen class, then assign to our fields in __init__
@@ -469,25 +480,33 @@ class JsonObjectClassProcessor(object):
         return f'{self_name}.{name}={value}'
 
     def _init_fn(self, fields: List[Field], self_name: str, d_name='_', ds_name='__', kwargs_name='___'):
-        # fields contains both real fields and InitVar pseudo-fields.
-
-        locals: dict = {
+        _locals: dict = {
             'MISSING': MISSING,
             'dict': dict,
         }
-        locals.update((f'_type_{f.name}', f.type) for f in fields)
-        locals.update((f'_key_{f.name}', f.key) for f in fields)
+        _locals.update((f'_type_{f.name}', f.type) for f in fields)
+        _locals.update((f'_key_{f.name}', f.key) for f in fields)
 
         # all args
         args = [self_name, f'*{ds_name}:dict'] + [f'{f.name}:_type_{f.name}=MISSING' for f in fields]
         if kwargs_name:
             args.append(f'**{kwargs_name}')
 
+        # default values
+        body_lines = []
+        for f in fields:
+            if not self.is_missing(f.init_default):
+                _locals[f'_default_{f.name}'] = f.init_default
+                body_lines.append(f"{self_name}[_key_{f.name}] = _default_{f.name}")
+            elif not self.is_missing(f.init_default_factory):
+                _locals[f'_default_{f.name}'] = f.init_default_factory
+                body_lines.append(f"{self_name}[_key_{f.name}] = _default_{f.name}()")
+
         # update by given dicts
-        body_lines = [
+        body_lines.extend([
             f"for {d_name} in {ds_name}:",
             f" {self_name}.update({d_name})",
-        ]
+        ])
 
         # update by kwargs
         if kwargs_name:
@@ -501,7 +520,7 @@ class JsonObjectClassProcessor(object):
                     f"if {f.name} is not MISSING:",
                     f" {self_name}.{f.name} = {f.name}",
                     f"elif _key_{f.name} in {self_name}:",
-                    f" {self_name}.{f.name} = {self_name}[_key_{f.name}]"
+                    f" {self_name}.{f.name} = {self_name}[_key_{f.name}]",
                 ])
             elif f._field_type is _FIELD_CLASSVAR:
                 body_lines.extend([
@@ -509,13 +528,7 @@ class JsonObjectClassProcessor(object):
                     f" {self_name}.{f.name} = {f.name}",
                 ])
 
-        # body lines would not be empty
-        # If no body lines, use 'pass'.
-        # if not body_lines:
-        #     body_lines = ['pass']
-
-        return self._create_fn('__init__', args, body_lines,
-                               _locals=locals, return_type=None)
+        return self._create_fn('__init__', args, body_lines, _locals=_locals)
 
     def add_init_func(self):
         """
@@ -640,7 +653,7 @@ class JsonObjectClassProcessor(object):
         return self.cls
 
 def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
-                default_field_value=None, adapter_detector: AdapterDetector = None,
+                getter_default=None, adapter_detector: AdapterDetector = None,
                 create_init_func=True, create_iter_func=True, iter_func_name='field_items',
                 **kwargs):
     """
@@ -648,7 +661,7 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
     """
     if config is None:
         config = ProcessorConfig(
-            default_field_value=default_field_value,
+            getter_default=getter_default,
             adapter_detector=adapter_detector or AdapterDetector(),
             create_init_func=create_init_func,
             create_iter_func=create_iter_func,
@@ -670,50 +683,3 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, config=None,
     # We're called as @json_object without parens.
     return wrap(_cls)
 
-# Another way to define a json_object class, just inherit this class.
-class JsonObject(dict):
-    def __init_subclass__(cls):
-        warnings.warn("Use decorator `json_object()` instead", DeprecationWarning)
-        super().__init_subclass__()
-        JsonObjectClassProcessor()(cls)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        fields = getattr(self, _FIELDS, {})
-        for f in fields.values():
-            if callable(f.encoder):
-                value = self.get(f.key)
-                self[f.key] = f.encoder(value)
-
-    def field_items(self) -> Iterable[Tuple[str, Any]]:
-        """
-        iter of defined field values
-        """
-        # one should not define a field use the reserved name
-        fields = getattr(self, _FIELDS, {})
-        for name, field in fields.items():
-            if field.key in self:
-                yield name, self[field.key]
-
-    @property
-    def _iter_field_items_only(self) -> bool:
-        """
-        determine output of method items(): if `True`, same as field_items(); else same as dict.items()
-        """
-        return False
-
-    def items(self) -> Iterable[Tuple[str, Any]]:
-        if self._iter_field_items_only:
-            return self.field_items()
-        return super().items()
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> 'JsonObject':
-        """
-        This method can be overwritten for custom use.
-        """
-        return cls(d)
-
-    @classmethod
-    def from_list(cls, li: List[Dict[str, Any]]) -> List['JsonObject']:
-        return [cls.from_dict(x) for x in li]
