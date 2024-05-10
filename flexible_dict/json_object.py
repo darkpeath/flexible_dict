@@ -491,7 +491,7 @@ class JsonObjectClassProcessor(object):
                     _locals[f'_default_{f.name}'] = f.init_default_factory
                     body_lines.extend([
                         f"else:",
-                        f"{self_name}[_key_{f.name}] = _default_{f.name}()"
+                        f" {self_name}[_key_{f.name}] = _default_{f.name}()"
                     ])
             elif f._field_type is _FIELD_CLASSVAR:
                 body_lines.extend([
