@@ -16,10 +16,8 @@ try:
 except ImportError:
     from typing_extensions import Literal
 import sys
-import re
 import types
 import builtins
-import warnings
 import dataclasses
 from .adapter import (
     _ENCODER_TYPE, _DECODER_TYPE,
@@ -50,38 +48,10 @@ class _FIELD_BASE:
         return self.name
 _FIELD_DICTKEY = _FIELD_BASE('_FIELD_DICTKEY')
 _FIELD_CLASSVAR = _FIELD_BASE('_FIELD_CLASSVAR')
-_FIELD_OBJECTVAR = _FIELD_BASE('_FIELD_OBJECTVAR')
-_FIELD_INITVAR = _FIELD_BASE('_FIELD_INITVAR')
 
 # The name of an attribute on the class where we store the Field
 # objects.  Also used to check if a class is a json_object class.
 _FIELDS = '__json_object_fields__'
-
-# The name of the function, that if it exists, is called at the end of
-# __init__.
-_POST_INIT_NAME = '__post_init__'
-
-# String regex that string annotations for ClassVar or InitVar must match.
-# Allows "identifier.identifier[" or "identifier[".
-# https://bugs.python.org/issue33453 for details.
-_MODULE_IDENTIFIER_RE = re.compile(r'^(?:\s*(\w+)\s*\.)?\s*(\w+)')
-
-class ObjectVar:
-    __slots__ = ('type', )
-    def __init__(self, type):
-        self.type = type
-    def __repr__(self):
-        is_type = isinstance(self.type, type)
-        if is_type and sys.version_info >= (3, 9):
-            is_type = not isinstance(self.type, types.GenericAlias)
-        if is_type:
-            type_name = self.type.__name__
-        else:
-            # typing objects, e.g. List[int]
-            type_name = repr(self.type)
-        return f'flexible_dict.ObjectVar[{type_name}]'
-    def __class_getitem__(cls, type):
-        return ObjectVar(type)
 
 @dataclasses.dataclass
 class Field:
@@ -274,7 +244,7 @@ class JsonObjectClassProcessor(object):
             # ClassVar and InitVar to specify init=<anything>.
 
         # For real fields, disallow mutable defaults for known types.
-        if f._field_type in (_FIELD_DICTKEY, _FIELD_OBJECTVAR):
+        if f._field_type is _FIELD_DICTKEY:
             if isinstance(f.getter_default, (list, dict, set)):
                 raise ValueError(f'mutable getter_default {type(f.getter_default)} for field '
                                  f'{f.name} is not allowed: use getter_default_factory0 or getter_default_factory1')
@@ -492,27 +462,15 @@ class JsonObjectClassProcessor(object):
         if kwargs_name:
             args.append(f'**{kwargs_name}')
 
-        # default values
         body_lines = []
-        for f in fields:
-            if not self.is_missing(f.init_default):
-                _locals[f'_default_{f.name}'] = f.init_default
-                body_lines.append(f"{self_name}[_key_{f.name}] = _default_{f.name}")
-            elif not self.is_missing(f.init_default_factory):
-                _locals[f'_default_{f.name}'] = f.init_default_factory
-                body_lines.append(f"{self_name}[_key_{f.name}] = _default_{f.name}()")
 
-        # update by given dicts
+        # update by given dicts, value would be encoded since it's set before walking fields
         body_lines.extend([
             f"for {d_name} in {ds_name}:",
             f" {self_name}.update({d_name})",
         ])
 
-        # update by kwargs
-        if kwargs_name:
-            body_lines.append(f"{self_name}.update({kwargs_name})")
-
-        # update by name
+        # walk fields to update and encode
         for f in fields:
             if f._field_type is _FIELD_DICTKEY:
                 # value stored in dict would be correctly encoded by setting with `.`
@@ -522,11 +480,28 @@ class JsonObjectClassProcessor(object):
                     f"elif _key_{f.name} in {self_name}:",
                     f" {self_name}.{f.name} = {self_name}[_key_{f.name}]",
                 ])
+                # set default value
+                if not self.is_missing(f.init_default):
+                    _locals[f'_default_{f.name}'] = f.init_default
+                    body_lines.extend([
+                        f"else:",
+                        f" {self_name}[_key_{f.name}] = _default_{f.name}",
+                    ])
+                elif not self.is_missing(f.init_default_factory):
+                    _locals[f'_default_{f.name}'] = f.init_default_factory
+                    body_lines.extend([
+                        f"else:",
+                        f"{self_name}[_key_{f.name}] = _default_{f.name}()"
+                    ])
             elif f._field_type is _FIELD_CLASSVAR:
                 body_lines.extend([
                     f"if {f.name} is not MISSING:",
                     f" {self_name}.{f.name} = {f.name}",
                 ])
+
+        # update by kwargs, value would not be encoded since it's set after walking fields
+        if kwargs_name:
+            body_lines.append(f"{self_name}.update({kwargs_name})")
 
         return self._create_fn('__init__', args, body_lines, _locals=_locals)
 
