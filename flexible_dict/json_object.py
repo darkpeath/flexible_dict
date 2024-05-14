@@ -486,13 +486,24 @@ class JsonObjectClassProcessor(object):
         # walk fields to update and encode
         for f in fields:
             if f._field_type is _FIELD_DICTKEY:
+                should_encode = callable(f.encoder)
+                if should_encode:
+                    _locals[f'_encoder_{f.name}'] = f.encoder
+
                 # value stored in dict would be correctly encoded by setting with `.`
-                body_lines.extend([
-                    f"if {f.name} is not MISSING:",
-                    f" {self_name}.{f.name} = {f.name}",
-                    f"elif _key_{f.name} in {self_name}:",
-                    f" {self_name}.{f.name} = {self_name}[_key_{f.name}]",
-                ])
+
+                # if value given, stored in the dict
+                body_lines.append(f"if {f.name} is not MISSING:")
+                if should_encode:
+                    body_lines.append(f" {f.name} = _encoder_{f.name}({f.name})")
+                body_lines.append(f" {self_name}[_key_{f.name}] = {f.name}")
+
+                # if value not given but key already in the dict, that means the values is passed in a dict
+                # encode the value if necessary
+                if should_encode:
+                    body_lines.append(f"elif _key_{f.name} in {self_name}:")
+                    body_lines.append(f" {self_name}[_key_{f.name}] = _encoder_{f.name}({self_name}[_key_{f.name}])")
+                    
                 # set default value
                 if not self.is_missing(f.init_default):
                     _locals[f'_default_{f.name}'] = f.init_default
