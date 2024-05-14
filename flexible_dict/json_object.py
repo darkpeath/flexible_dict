@@ -90,10 +90,18 @@ class Field:
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
+class DefaultScope:
+    GETTER = 1
+    INIT = 2
+
 @dataclasses.dataclass
 class ProcessorConfig:
     # default value when access an absent key in class scope
     getter_default: Any = MISSING
+
+    # if set a default value but not a field, determine which scope should the value be used
+    # scope can be getter or init, and can all set active
+    default_scopes: int = DefaultScope.GETTER
 
     # auto set encoder and decoder for field
     adapter_detector: AdapterDetector = dataclasses.field(default_factory=AdapterDetector)
@@ -193,7 +201,12 @@ class JsonObjectClassProcessor(object):
             if isinstance(default, types.MemberDescriptorType):
                 # This is a field in __slots__, so it has no default value.
                 default = MISSING
-            f = Field(init_default=default)
+            getter_default = init_default = MISSING
+            if self.config.default_scopes & DefaultScope.GETTER:
+                getter_default = default
+            if self.config.default_scopes & DefaultScope.INIT:
+                init_default = default
+            f = Field(init_default=init_default, getter_default=getter_default)
 
         # Only at this point do we know the name and the type.  Set them.
         f.name = a_name
