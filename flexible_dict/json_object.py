@@ -625,7 +625,7 @@ class JsonObjectClassProcessor(object):
         body_lines = [
             f"if {item_name} in {funcs_name}:",
             f" return {funcs_name}[{item_name}]({self_name})",
-            f"raise AttributeError()",
+            'raise AttributeError(f"' + f"'{self.cls.__name__}' object has no attribute " + "'{" + item_name + '}\'")',
         ]
         return self._create_fn('__getattr__', args, body_lines, _locals=_locals)
 
@@ -655,12 +655,14 @@ class JsonObjectClassProcessor(object):
         funcs = {f.name: self.build_setter(f) for f in fields}
         _locals = {
             funcs_name: funcs,
+            'super': super,
         }
         args = [self_name, key_name, value_name]
         body_lines = [
             f"if {key_name} in {funcs_name}:",
-            f" {funcs_name}[{key_name}]({self_name}, {key_name}, {value_name})",
-            f"return super().__setattr__({key_name}, {value_name})",
+            f" return {funcs_name}[{key_name}]({self_name}, {value_name})",
+            'raise AttributeError(f"' + f"'{self.cls.__name__}' object has no attribute " + "'{" + key_name + '}\'")',
+            # f"return super().__setattr__({key_name}, {value_name})",
         ]
         return self._create_fn('__setattr__', args, body_lines, _locals=_locals)
 
