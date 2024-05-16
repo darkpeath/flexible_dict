@@ -127,3 +127,12 @@ def test_json_object():
     assert a.j == 10
     assert a['j'] == 10
 
+def test_inherit():
+    @fd.json_object
+    class C(A):
+        t: int
+        k: str = "s"
+    c = C(t=1, k='w')
+    assert c.t == 1
+    assert c.k == 'w'
+

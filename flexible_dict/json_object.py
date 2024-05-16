@@ -436,7 +436,8 @@ class JsonObjectClassProcessor(object):
                     else:
                         setattr(cls, name, field.init_default)
             else:
-                setattr(cls, name, self.build_property(field))
+                if name in cls.__dict__:
+                    delattr(cls, name)
                 fields[name] = field
 
         # Do we have any Field members that don't also have annotations?
@@ -462,7 +463,8 @@ class JsonObjectClassProcessor(object):
             return f'BUILTINS.object.__setattr__({self_name},{name!r},{value})'
         return f'{self_name}.{name}={value}'
 
-    def _init_fn(self, fields: List[Field], self_name: str, d_name='_', ds_name='__', kwargs_name='___'):
+    def _init_fn(self, fields: List[Field], self_name: str, d_name='_', ds_name='__',
+                 k_name='__k', v_name='__v', kwargs_name='___'):
         _locals: dict = {
             'MISSING': MISSING,
             'dict': dict,
@@ -613,10 +615,85 @@ class JsonObjectClassProcessor(object):
             self._set_new_attribute(self.cls, 'keys', self._iter_field_keys_fn('keys', 'self'))
             self._set_new_attribute(self.cls, 'values', self._iter_field_values_fn('values', 'self'))
 
+    def _getattr_fn(self, fields: List[Field], self_name='self', item_name='item', funcs_name='funcs'):
+        funcs = {f.name: self.build_getter(f) for f in fields}
+        _locals = {
+            funcs_name: funcs,
+            'AttributeError': AttributeError,
+        }
+        args = [self_name, item_name]
+        body_lines = [
+            f"if {item_name} in {funcs_name}:",
+            f" return {funcs_name}[{item_name}]({self_name})",
+            f"raise AttributeError()",
+        ]
+        return self._create_fn('__getattr__', args, body_lines, _locals=_locals)
+
+    def add_getattr_func(self):
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        self._set_new_attribute(self.cls, '__getattr__', self._getattr_fn(fields))
+
+    def _getattribute_fn(self, fields: List[Field], self_name='self', item_name='item', funcs_name='funcs'):
+        funcs = {f.name: self.build_getter(f) for f in fields}
+        _locals = {
+            funcs_name: funcs,
+        }
+        args = [self_name, item_name]
+        body_lines = [
+            f"if {item_name} in {funcs_name}:",
+            f" return {funcs_name}[{item_name}]({self_name})",
+            f"return super(object, {self_name}).__getattribute__({item_name})",
+        ]
+        return self._create_fn('__getattribute__', args, body_lines, _locals=_locals)
+
+    def add_getattribute_func(self):
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        self._set_new_attribute(self.cls, '__getattribute__', self._getattribute_fn(fields))
+
+    def _setattr_fn(self, fields: List[Field], self_name='self', key_name='key',
+                    value_name='value', funcs_name='funcs'):
+        funcs = {f.name: self.build_setter(f) for f in fields}
+        _locals = {
+            funcs_name: funcs,
+        }
+        args = [self_name, key_name, value_name]
+        body_lines = [
+            f"if {key_name} in {funcs_name}:",
+            f" {funcs_name}[{key_name}]({self_name}, {key_name}, {value_name})",
+            f"return super().__setattr__({key_name}, {value_name})",
+        ]
+        return self._create_fn('__setattr__', args, body_lines, _locals=_locals)
+
+    def add_setattr_func(self):
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        self._set_new_attribute(self.cls, '__setattr__', self._setattr_fn(fields))
+
+    def _delattr_fn(self, fields: List[Field], self_name='self', item_name='item', funcs_name='funcs'):
+        funcs = {f.name: self.build_deleter(f) for f in fields}
+        _locals = {
+            funcs_name: funcs,
+        }
+        args = [self_name, item_name]
+        body_lines = [
+            f"if {item_name} in {funcs_name}:",
+            f" return {funcs_name}[{item_name}]({self_name}, {item_name})",
+            f"return super().__delattr__({item_name})",
+        ]
+        return self._create_fn('__delattr__', args, body_lines, _locals=_locals)
+
+    def add_delattr_func(self):
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        self._set_new_attribute(self.cls, '__delattr__', self._delattr_fn(fields))
+
     def add_class_methods(self):
         """
         add some class methods
         """
+        self.add_getattr_func()
+        # self.add_getattribute_func()
+        self.add_setattr_func()
+        self.add_delattr_func()
+
         if self.config.create_init_func:
             self.add_init_func()
 
