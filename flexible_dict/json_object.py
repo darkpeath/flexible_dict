@@ -91,6 +91,7 @@ class Field:
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 def field(
+    *,
     key: str = MISSING,
     readable: bool = True,
     writeable: bool = True,
