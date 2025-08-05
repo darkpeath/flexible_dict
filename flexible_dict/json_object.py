@@ -90,6 +90,37 @@ class Field:
     # additional metadata
     metadata: Dict[Any, Any] = dataclasses.field(default_factory=dict)
 
+def field(
+    key: str = MISSING,
+    readable: bool = True,
+    writeable: bool = True,
+    deletable: bool = True,
+    init_default: Any = MISSING,
+    init_default_factory: Callable[[], Any] = MISSING,
+    getter_default: Any = MISSING,
+    getter_default_factory0: Callable[[], Any] = MISSING,
+    getter_default_factory1: Callable[[dict], Any] = MISSING,
+    encoder: Union[_ENCODER_TYPE, Literal['auto'], None] = 'auto',  # cast value type when write to dict
+    decoder: Union[_DECODER_TYPE, None] = 'auto',  # cast value type when read from dict
+    check_exist_before_delete: bool = True,
+    metadata: Dict[Any, Any] = None,
+) -> Field:
+    return Field(
+        key=key,
+        readable=readable,
+        writeable=writeable,
+        deletable=deletable,
+        init_default=init_default,
+        init_default_factory=init_default_factory,
+        getter_default=getter_default,
+        getter_default_factory0=getter_default_factory0,
+        getter_default_factory1=getter_default_factory1,
+        encoder=encoder,
+        decoder=decoder,
+        check_exist_before_delete=check_exist_before_delete,
+        metadata=metadata or {},
+    )
+
 class DefaultScope:
     GETTER = 1
     INIT = 2
