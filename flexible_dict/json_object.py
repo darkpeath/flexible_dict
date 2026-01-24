@@ -54,6 +54,10 @@ _FIELD_CLASSVAR = _FIELD_BASE('_FIELD_CLASSVAR')
 # objects.  Also used to check if a class is a json_object class.
 _FIELDS = '__json_object_fields__'
 
+# The name of the function, that if it exists, is called at the end of
+# __init__.
+_POST_INIT_NAME = '__post_init__'
+
 @dataclasses.dataclass
 class Field:
     # the key stored in the dict; same as name if set as MISSING
@@ -503,7 +507,7 @@ class JsonObjectClassProcessor(object):
             return f'BUILTINS.object.__setattr__({self_name},{name!r},{value})'
         return f'{self_name}.{name}={value}'
 
-    def _init_fn(self, fields: List[Field], self_name: str, d_name='_', ds_name='__',
+    def _init_fn(self, fields: List[Field], self_name: str, has_post_init: bool, d_name='_', ds_name='__',
                  k_name='__k', v_name='__v', kwargs_name='___'):
         _locals: dict = {
             'MISSING': MISSING,
@@ -569,6 +573,14 @@ class JsonObjectClassProcessor(object):
         if kwargs_name:
             body_lines.append(f"{self_name}.update({kwargs_name})")
 
+        # Does this class have a post-init function?
+        if has_post_init:
+            body_lines.append(f'{self_name}.{_POST_INIT_NAME}()')
+
+        # If no body lines, use 'pass'.
+        if not body_lines:
+            body_lines = ['pass']
+
         return self._create_fn('__init__', args, body_lines, _locals=_locals)
 
     def add_init_func(self):
@@ -576,9 +588,11 @@ class JsonObjectClassProcessor(object):
         add __init__ function
         """
         fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        has_post_init = hasattr(self.cls, _POST_INIT_NAME)
         self._set_new_attribute(self.cls, '__init__', self._init_fn(
             fields,
             'self',
+            has_post_init,
             '_',
             '__',
             '___',
