@@ -15,6 +15,7 @@ try:
     from typing import Literal
 except ImportError:
     from typing_extensions import Literal
+from types import FunctionType
 import sys
 import types
 import builtins
@@ -313,12 +314,19 @@ class JsonObjectClassProcessor(object):
 
         return f
 
-    @staticmethod
-    def _set_new_attribute(cls, name, value):
+    def _set_qualname(self, cls, value):
+        # Ensure that the functions returned from _create_fn uses the proper
+        # __qualname__ (the class they belong to).
+        if isinstance(value, FunctionType):
+            value.__qualname__ = f"{cls.__qualname__}.{value.__name__}"
+        return value
+
+    def _set_new_attribute(self, cls, name, value):
         # Never overwrites an existing attribute.  Returns True if the
         # attribute already exists.
         if name in cls.__dict__:
             return True
+        self._set_qualname(cls, value)
         setattr(cls, name, value)
         return False
 
