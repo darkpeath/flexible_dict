@@ -150,3 +150,10 @@ def test_init_subclass():
     assert d.b == 5
     assert d.i == 8
 
+def test_BaseDict():
+    class C(fd.BaseDict):
+        t: int
+        k: str = "s"
+    c = C(t=2, k="ti")
+    assert c.t == 2
+    assert c.k == "ti"

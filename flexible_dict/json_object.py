@@ -833,3 +833,38 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, *, config=None,
     # We're called as @json_object without parens.
     return wrap(_cls)
 
+# Another way to define a json_object class, just inherit this class.
+@json_object(create_init_subclass_func=True)
+class BaseDict(dict):
+    def field_items(self) -> Iterable[Tuple[str, Any]]:
+        """
+        iter of defined field values
+        """
+        # one should not define a field use the reserved name
+        fields = getattr(self, _FIELDS, {})
+        for name, field in fields.items():
+            if field.key in self:
+                yield name, self[field.key]
+
+    @property
+    def _iter_field_items_only(self) -> bool:
+        """
+        determine output of method items(): if `True`, same as field_items(); else same as dict.items()
+        """
+        return False
+
+    def items(self) -> Iterable[Tuple[str, Any]]:
+        if self._iter_field_items_only:
+            return self.field_items()
+        return super().items()
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'BaseDict':
+        """
+        This method can be overwritten for custom use.
+        """
+        return cls(d)
+
+    @classmethod
+    def from_list(cls, li: List[Dict[str, Any]]) -> List['BaseDict']:
+        return [cls.from_dict(x) for x in li]
