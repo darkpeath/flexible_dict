@@ -136,3 +136,17 @@ def test_inherit():
     assert c.t == 1
     assert c.k == 'w'
 
+def test_init_subclass():
+    @fd.json_object(create_init_subclass_func=True)
+    class C:
+        t: int
+        k: str = "s"
+    # @fd.json_object
+    class D(C):
+        b: int = 5
+        i: int
+    d = D(i=8)
+    assert d.k == "s"
+    assert d.b == 5
+    assert d.i == 8
+

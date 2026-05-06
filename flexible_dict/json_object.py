@@ -149,6 +149,9 @@ class ProcessorConfig:
     # whether to create a function to iter all field values
     create_iter_func: bool = True
 
+    # whether to create a new __init_subclass__ function
+    create_init_subclass_func: bool = False
+
     # method name for field iter;
     # name can be 'items' therefor supper method wound be overwritten.
     iter_func_name: str = 'field_items'
@@ -598,6 +601,22 @@ class JsonObjectClassProcessor(object):
             '___',
         ))
 
+    def _init_subclass_func(self):
+        _locals: dict = {
+            'json_object': json_object,
+        }
+        body_lines = [
+            'json_object(cls)'
+        ]
+        func = self._create_fn('__init_subclass__', ['cls'], body_lines, _locals=_locals)
+        return classmethod(func)
+
+    def add_init_subclass_func(self):
+        """
+        add __init_subclass__ function
+        """
+        self._set_new_attribute(self.cls, '__init_subclass__', self._init_subclass_func())
+
     def _iter_field_items_fn(self, fields: List[Field], func_name: str, self_name: str, res_name='res'):
         _locals = {
             f'_name_{f.name}': f.name
@@ -753,6 +772,9 @@ class JsonObjectClassProcessor(object):
         if self.config.create_init_func:
             self.add_init_func()
 
+        if self.config.create_init_subclass_func:
+            self.add_init_subclass_func()
+
         if self.config.create_iter_func:
             self.add_iter_fields_func()
 
@@ -780,7 +802,8 @@ class JsonObjectClassProcessor(object):
 
 def json_object(_cls=None, processor=JsonObjectClassProcessor, *, config=None,
                 getter_default=None, adapter_detector: AdapterDetector = None,
-                create_init_func=True, create_iter_func=True, iter_func_name='field_items',
+                create_init_func=True, create_init_subclass_func=False,
+                create_iter_func=True, iter_func_name='field_items',
                 **kwargs):
     """
     a decorator to mark a class as json format
@@ -790,6 +813,7 @@ def json_object(_cls=None, processor=JsonObjectClassProcessor, *, config=None,
             getter_default=getter_default,
             adapter_detector=adapter_detector or AdapterDetector(),
             create_init_func=create_init_func,
+            create_init_subclass_func=create_init_subclass_func,
             create_iter_func=create_iter_func,
             iter_func_name=iter_func_name,
             **kwargs
