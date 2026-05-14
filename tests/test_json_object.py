@@ -157,3 +157,26 @@ def test_BaseDict():
     c = C(t=2, k="ti")
     assert c.t == 2
     assert c.k == "ti"
+
+def test_dataclass():
+    # work with dataclass, for hint
+    import dataclasses
+    @dataclasses.dataclass(eq=False, repr=False)
+    @fd.json_object
+    class A:
+        i: int
+    @dataclasses.dataclass(eq=False, repr=False)
+    @fd.json_object
+    class B(A):
+        s: str
+    b = B()
+    assert b.i is None
+
+    @fd.json_object
+    @fd.json_object
+    @fd.json_object
+    class C(B):
+        pass
+
+    c = C(s="to")
+    assert c.s == "to"

@@ -786,8 +786,8 @@ class JsonObjectClassProcessor(object):
             raise ValueError("Class not given.")
 
         # if already processed, return directly
-        if getattr(self.cls, _FIELDS, None) is not None:
-            return
+        # if self.cls.__dict__.get(_FIELDS, None) is not None:
+        #     return
 
         # first, ensure the class be a subclass of dict
         self.add_base()
