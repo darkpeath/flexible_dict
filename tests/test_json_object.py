@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from typing import List
+from typing import List, Optional, ClassVar
+import pytest
 import flexible_dict as fd
 
 @fd.json_object
@@ -284,3 +285,176 @@ def test_dataclass():
 
     c = C(s="to")
     assert c.s == "to"
+
+def test_delete_field():
+    @fd.json_object
+    class A:
+        a: int = fd.Field(getter_default=0)
+        b: int = fd.Field(getter_default=0, check_exist_before_delete=False)
+    a = A(a=1, b=2)
+    del a.a
+    assert dict(a) == {'b': 2}
+    # deleting an absent key is silently ignored by default
+    del a.a
+    del a.b
+    # but raises when check_exist_before_delete is False
+    with pytest.raises(KeyError):
+        del a.b
+    # deleting an unknown attribute raises
+    with pytest.raises(AttributeError):
+        del a.unknown
+
+def test_access_control():
+    @fd.json_object
+    class A:
+        r: int = fd.Field(readable=False, getter_default=1)
+        w: int = fd.Field(writeable=False, getter_default=2)
+        d: int = fd.Field(deletable=False, getter_default=3)
+    a = A()
+    with pytest.raises(AttributeError):
+        _ = a.r
+    with pytest.raises(AttributeError):
+        a.w = 5
+    a['d'] = 4
+    with pytest.raises(AttributeError):
+        del a.d
+    # the dict itself is not restricted
+    a['r'] = 10
+    assert a['r'] == 10
+    assert a.w == 2
+    assert a.d == 4
+
+def test_set_unknown_attribute():
+    @fd.json_object
+    class A:
+        a: int
+    a = A()
+    with pytest.raises(AttributeError):
+        a.unknown = 1
+
+def test_init_default():
+    @fd.json_object
+    class A:
+        a: int = fd.Field(init_default=7)
+        b: List[int] = fd.Field(init_default_factory=list)
+        c: int = fd.Field(getter_default=0)
+    a = A()
+    # init defaults are stored in the dict, getter defaults are not
+    assert dict(a) == {'a': 7, 'b': []}
+    # factory should build a new object for each instance
+    assert A().b is not a.b
+    # given values win over defaults
+    assert dict(A(a=1, b=[2])) == {'a': 1, 'b': [2]}
+
+def test_getter_default_factory():
+    @fd.json_object
+    class A:
+        a: int = fd.Field(init_default=1)
+        b: int = fd.Field(getter_default_factory0=lambda: 42)
+        c: int = fd.Field(getter_default_factory1=lambda d: d['a'] + 1)
+    a = A()
+    assert a.b == 42
+    assert a.c == 2
+    a.b = 0
+    a.c = 0
+    assert a.b == 0
+    assert a.c == 0
+
+def test_class_scope_getter_default():
+    @fd.json_object(getter_default=-1)
+    class A:
+        a: int
+        b: str
+    a = A()
+    assert a.a == -1
+    assert a.b == -1
+    a.a = 1
+    assert a.a == 1
+
+def test_nested_json_object():
+    @fd.json_object
+    class Inner:
+        x: int = fd.Field(getter_default=0)
+
+    @fd.json_object
+    class Outer:
+        one: Inner
+        many: List[Inner]
+        opt: Optional[Inner]
+
+    # dict values should be encoded as json object classes
+    o = Outer(one={'x': 1}, many=[{'x': 2}, {'x': 3}], opt={'x': 4})
+    assert type(o['one']) is Inner
+    assert [type(e) for e in o['many']] == [Inner, Inner]
+    assert type(o['opt']) is Inner
+    assert o.one.x == 1
+    assert [e.x for e in o.many] == [2, 3]
+
+    # also encoded when values are passed in a dict
+    o = Outer(dict(one={'x': 1}, many=[{'x': 2}]))
+    assert type(o['one']) is Inner
+    assert [type(e) for e in o['many']] == [Inner]
+
+def test_explicit_encoder_decoder():
+    @fd.json_object
+    class A:
+        ts: int = fd.Field(encoder=int, decoder=str, getter_default=0)
+    a = A()
+    a.ts = "123"
+    assert a['ts'] == 123
+    assert a.ts == "123"
+
+def test_classvar():
+    @fd.json_object
+    class A:
+        cv: ClassVar[int] = 100
+        a: int = fd.Field(getter_default=1)
+    a = A()
+    # a ClassVar is not a field: kept as a class attribute, not a dict key
+    assert A.cv == 100
+    assert a.cv == 100
+    assert 'cv' not in a
+    assert dict(a.field_items()) == {'a': 1}
+
+def test_post_init():
+    @fd.json_object
+    class A:
+        a: int = fd.Field(getter_default=0)
+        def __post_init__(self):
+            self['double_a'] = self.a * 2
+    a = A(a=3)
+    assert dict(a) == {'a': 3, 'double_a': 6}
+
+def test_field_definition_errors():
+    with pytest.raises(ValueError):
+        @fd.json_object
+        class A:
+            a: list = []
+    with pytest.raises(ValueError):
+        @fd.json_object
+        class B:
+            b: dict = fd.Field(init_default={})
+    with pytest.raises(TypeError):
+        @fd.json_object
+        class C:
+            c = fd.Field()
+
+def test_no_init_func():
+    @fd.json_object(create_init_func=False)
+    class A:
+        a: int = fd.Field(getter_default=5)
+    # the native dict __init__ is kept
+    a = A({'a': 9})
+    assert a.a == 9
+    assert A().a == 5
+
+def test_from_dict_and_from_list():
+    class A(fd.BaseDict):
+        a: int = fd.Field(getter_default=0)
+    a = A.from_dict({'a': 1, 'other': 2})
+    assert type(a) is A
+    assert a.a == 1
+    assert a['other'] == 2
+    li = A.from_list([{'a': 1}, {'a': 2}])
+    assert [type(x) for x in li] == [A, A]
+    assert [x.a for x in li] == [1, 2]
