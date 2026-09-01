@@ -6,9 +6,9 @@ class DataCopier(object):
         if isinstance(obj, dict):
             return self.copy_dict(obj)
         if isinstance(obj, list):
-            return [self.copy_list(x) for x in obj]
+            return self.copy_list(obj)
         if isinstance(obj, tuple):
-            return tuple(self.copy_tuple(x) for x in obj)
+            return self.copy_tuple(obj)
         return obj
 
     def copy_dict(self, obj: dict):
