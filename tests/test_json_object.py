@@ -136,6 +136,62 @@ def test_inherit():
     assert c.t == 1
     assert c.k == 'w'
 
+def test_diamond_inherit():
+    # all classes decorated
+    @fd.json_object
+    class A:
+        a: int = 1
+        x: int = 1
+    @fd.json_object
+    class B(A):
+        b: int = 2
+    @fd.json_object
+    class C(A):
+        c: int = 3
+        x: int = 300
+    @fd.json_object
+    class D(B, C):
+        d: int = 4
+    v = D()
+    assert (v.a, v.b, v.c, v.d) == (1, 2, 3, 4)
+    # field x is redefined only in C;
+    # same as attribute lookup, value should follow the MRO (D, B, C, A)
+    assert v.x == 300
+
+def test_diamond_inherit_undecorated_root():
+    # the common base class is not decorated and not a subclass of dict
+    class A:
+        a: int = 1
+    @fd.json_object
+    class B(A):
+        b: int = 2
+    @fd.json_object
+    class C(A):
+        c: int = 3
+    @fd.json_object
+    class D(B, C):
+        d: int = 4
+    v = D()
+    assert (v.b, v.c, v.d) == (2, 3, 4)
+    assert isinstance(v, A)
+    assert isinstance(v, dict)
+    assert [t.__name__ for t in D.__mro__] == ['D', 'B', 'C', 'A', 'dict', 'object']
+
+def test_diamond_inherit_BaseDict():
+    class A(fd.BaseDict):
+        x: int = 1
+        y: str = "a"
+    class B(A):
+        x: int = 2
+    class C(A):
+        y: str = "c"
+    class D(B, C):
+        z: float = 0.5
+    v = D()
+    assert v.x == 2
+    assert v.y == "c"
+    assert v.z == 0.5
+
 def test_init_subclass():
     @fd.json_object(create_init_subclass_func=True)
     class C:

@@ -430,7 +430,11 @@ class JsonObjectClassProcessor(object):
         cls = self.cls
         if not issubclass(cls, dict):
             d = dict(cls.__dict__)
-            d.pop('__dict__')
+            # These descriptors belong to the old class; they may be absent
+            # when a base class (in a diamond hierarchy for instance) already
+            # provides them, so remove them only if present.
+            d.pop('__dict__', None)
+            d.pop('__weakref__', None)
             bases = tuple(b for b in cls.__bases__ if b != object) + (dict,)
             cls = type(cls.__name__, bases, d)
         self.cls = cls
@@ -450,11 +454,19 @@ class JsonObjectClassProcessor(object):
         # we're iterating over them, see if any are frozen.
         for b in cls.__mro__[-1:0:-1]:
             # Only process classes that have been processed by our
-            # decorator.  That is, they have a _FIELDS attribute.
-            base_fields = getattr(b, _FIELDS, None)
+            # decorator.  That is, they have a _FIELDS attribute in
+            # their own __dict__ (not inherited from a base).
+            base_fields = b.__dict__.get(_FIELDS, None)
             if base_fields is not None:
+                # _FIELDS of a class stores all fields including the
+                # inherited ones.  Only take fields defined by the class
+                # itself here; otherwise, in a diamond hierarchy, a field
+                # inherited by an earlier base of the MRO would override
+                # the redefinition from a later base.
+                base_annotations = b.__dict__.get('__annotations__', {})
                 for f in base_fields.values():
-                    fields[f.name] = f
+                    if f.name in base_annotations:
+                        fields[f.name] = f
 
         # Annotations that are defined in this class (not in base
         # classes).  If __annotations__ isn't present, then this class
