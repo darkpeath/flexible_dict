@@ -192,6 +192,54 @@ def test_diamond_inherit_BaseDict():
     assert v.y == "c"
     assert v.z == 0.5
 
+def test_process_twice():
+    # processing a class twice should be a no-op;
+    # it must not degrade the field metadata inherited by subclasses
+    @fd.json_object
+    @fd.json_object
+    class A:
+        i: int = 3
+        s: str = fd.Field(key="s2", getter_default="hello")
+    a = A()
+    assert a.i == 3
+    assert a.s == "hello"
+
+    # redundant decoration on a BaseDict subclass (already processed
+    # by __init_subclass__) is a realistic way to process twice
+    @fd.json_object
+    class X(fd.BaseDict):
+        i: int = 3
+        s: str = fd.Field(key="s2", getter_default="hello")
+
+    class Y(X):
+        t: int = 1
+    y = Y()
+    assert (y.i, y.s, y.t) == (3, "hello", 1)
+    # the custom key must be kept for subclasses
+    y.s = "world"
+    assert dict(y) == {"s2": "world"}
+
+def test_process_via_user_init_subclass_hook():
+    # a user-defined __init_subclass__ hook on a plain base class;
+    # rebuilding the class in add_base triggers the hook again,
+    # which must not lead to a harmful second pass
+    class AutoJson:
+        def __init_subclass__(cls, **kwargs):
+            super().__init_subclass__(**kwargs)
+            fd.json_object(cls)
+
+    @fd.json_object
+    class B(AutoJson):
+        i: int = 3
+        s: str = fd.Field(key="s2", getter_default="hello")
+
+    class C(B):
+        t: int = 1
+    c = C()
+    assert (c.i, c.s, c.t) == (3, "hello", 1)
+    c.s = "world"
+    assert dict(c) == {"s2": "world"}
+
 def test_init_subclass():
     @fd.json_object(create_init_subclass_func=True)
     class C:

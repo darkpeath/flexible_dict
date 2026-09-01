@@ -806,12 +806,30 @@ class JsonObjectClassProcessor(object):
         if self.cls is None:
             raise ValueError("Class not given.")
 
-        # if already processed, return directly
-        # if self.cls.__dict__.get(_FIELDS, None) is not None:
-        #     return
+        # If already processed, return directly.
+        #
+        # Check _OWN_FIELDS in the class's own __dict__ instead of using
+        # getattr, since getattr would be fooled by the attribute
+        # inherited from a processed base class.
+        #
+        # Processing a class twice is not only useless but also harmful:
+        # the second pass could not see the field default values (the
+        # class attributes were removed by the first pass), so it would
+        # rebuild degraded Field objects (losing default values, custom
+        # keys, encoders, etc.) and store them in _FIELDS/_OWN_FIELDS,
+        # which would then be inherited by subclasses.
+        if _OWN_FIELDS in self.cls.__dict__:
+            return
 
         # first, ensure the class be a subclass of dict
         self.add_base()
+
+        # The class may have already been processed during add_base:
+        # creating the new class triggers the __init_subclass__ hooks of
+        # the base classes, and such a hook may have called json_object.
+        # Check again to avoid a harmful second pass.
+        if _OWN_FIELDS in self.cls.__dict__:
+            return
 
         # then, process fields to access them in a flexible way
         self.process_fields()
