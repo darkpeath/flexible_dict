@@ -724,7 +724,7 @@ class JsonObjectClassProcessor(object):
         return self._create_fn('__getattr__', args, body_lines, _locals=_locals)
 
     def add_getattr_func(self):
-        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY and f.readable]
         self._set_new_attribute(self.cls, '__getattr__', self._getattr_fn(fields))
 
     def _getattribute_fn(self, fields: List[Field], self_name='self', item_name='item', funcs_name='funcs'):
@@ -761,7 +761,7 @@ class JsonObjectClassProcessor(object):
         return self._create_fn('__setattr__', args, body_lines, _locals=_locals)
 
     def add_setattr_func(self):
-        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY and f.writeable]
         self._set_new_attribute(self.cls, '__setattr__', self._setattr_fn(fields))
 
     def _delattr_fn(self, fields: List[Field], self_name='self', item_name='item', funcs_name='funcs'):
@@ -772,13 +772,15 @@ class JsonObjectClassProcessor(object):
         args = [self_name, item_name]
         body_lines = [
             f"if {item_name} in {funcs_name}:",
-            f" return {funcs_name}[{item_name}]({self_name}, {item_name})",
-            f"return super().__delattr__({item_name})",
+            f" return {funcs_name}[{item_name}]({self_name})",
+            # zero-arg super() doesn't work in a function created by exec
+            # (no __class__ cell), so call object.__delattr__ directly
+            f"return BUILTINS.object.__delattr__({self_name}, {item_name})",
         ]
         return self._create_fn('__delattr__', args, body_lines, _locals=_locals)
 
     def add_delattr_func(self):
-        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY]
+        fields = [f for f in self.fields.values() if f._field_type is _FIELD_DICTKEY and f.deletable]
         self._set_new_attribute(self.cls, '__delattr__', self._delattr_fn(fields))
 
     def add_class_methods(self):
