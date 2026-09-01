@@ -54,6 +54,11 @@ _FIELD_CLASSVAR = _FIELD_BASE('_FIELD_CLASSVAR')
 # objects.  Also used to check if a class is a json_object class.
 _FIELDS = '__json_object_fields__'
 
+# The name of an attribute on the class where we store only the Field
+# objects defined by the class itself (not inherited ones).  It's used
+# to merge fields of base classes following the MRO.
+_OWN_FIELDS = '__json_object_own_fields__'
+
 # The name of the function, that if it exists, is called at the end of
 # __init__.
 _POST_INIT_NAME = '__post_init__'
@@ -454,19 +459,17 @@ class JsonObjectClassProcessor(object):
         # we're iterating over them, see if any are frozen.
         for b in cls.__mro__[-1:0:-1]:
             # Only process classes that have been processed by our
-            # decorator.  That is, they have a _FIELDS attribute in
+            # decorator.  That is, they have a _OWN_FIELDS attribute in
             # their own __dict__ (not inherited from a base).
-            base_fields = b.__dict__.get(_FIELDS, None)
+            #
+            # Use _OWN_FIELDS instead of _FIELDS here since _FIELDS also
+            # stores the inherited fields; otherwise, in a diamond
+            # hierarchy, a field inherited by an earlier base of the MRO
+            # would override the redefinition from a later base.
+            base_fields = b.__dict__.get(_OWN_FIELDS, None)
             if base_fields is not None:
-                # _FIELDS of a class stores all fields including the
-                # inherited ones.  Only take fields defined by the class
-                # itself here; otherwise, in a diamond hierarchy, a field
-                # inherited by an earlier base of the MRO would override
-                # the redefinition from a later base.
-                base_annotations = b.__dict__.get('__annotations__', {})
                 for f in base_fields.values():
-                    if f.name in base_annotations:
-                        fields[f.name] = f
+                    fields[f.name] = f
 
         # Annotations that are defined in this class (not in base
         # classes).  If __annotations__ isn't present, then this class
@@ -483,6 +486,7 @@ class JsonObjectClassProcessor(object):
         # Now find fields in our class.  While doing so, validate some
         # things, and set the default values (as class attributes) where
         # we can.
+        own_fields = {}
         for name, a_type in cls_annotations.items():
             field = self.get_field(cls, name, a_type)
             if field._field_type is _FIELD_CLASSVAR:
@@ -498,6 +502,7 @@ class JsonObjectClassProcessor(object):
                 if name in cls.__dict__:
                     delattr(cls, name)
                 fields[name] = field
+                own_fields[name] = field
 
         # Do we have any Field members that don't also have annotations?
         for name, value in cls.__dict__.items():
@@ -507,6 +512,10 @@ class JsonObjectClassProcessor(object):
         # Remember all of the fields on our class (including bases).  This
         # also marks this class as being a json_object.
         setattr(cls, _FIELDS, fields)
+
+        # Remember the fields defined by our class itself (excluding
+        # bases), so that subclasses can merge fields following the MRO.
+        setattr(cls, _OWN_FIELDS, own_fields)
 
         self.fields = fields
 
